@@ -1,0 +1,32 @@
+# Web framework
+fastapi>=0.110
+uvicorn[standard]>=0.27
+gunicorn>=21.2
+python-multipart>=0.0.9
+
+# Data validation / models
+pydantic>=2.6
+
+# LangChain stack
+langchain>=0.3
+langchain-core>=0.3
+langchain-community>=0.3
+langchain-classic>=0.1
+langchain-openai>=0.2
+langgraph>=0.2
+
+# Vector store
+faiss-cpu>=1.8
+
+# LLM / search / misc
+openai>=1.40
+tavily-python>=0.5
+duckduckgo-search>=6.1
+requests>=2.31
+ddgs>=9.10.0
+
+# Environment variables
+python-dotenv>=1.0
+
+# PPTX export (optional, only used by to_pptx.py if present)
+python-pptx>=0.6.23

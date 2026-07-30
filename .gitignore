@@ -1,0 +1,28 @@
+# Secrets
+.env
+*.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local DB / exports
+d2c_exports.db
+d2c_price_cache.db
+d2c_price_cache.db-wal
+d2c_price_cache.db-shm
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log

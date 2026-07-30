@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Activity Description | Vodafone Egypt</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/chat.css">
+</head>
+<body>
+  <div class="container-fluid py-4">
+    <header class="d-flex align-items-center border-bottom border-2 border-vodafone pb-3 mb-4">
+      <div class="vodafone-dot me-3"></div>
+      <div class="flex-grow-1">
+        <h1 class="h3 mb-0 text-vodafone fw-bold">Activity Description Assistant</h1>
+        <p class="text-muted small mb-0">Vodafone Egypt – Cost Breakdown</p>
+      </div>
+      <a href="/" class="btn btn-outline-vodafone btn-sm">
+        ← Back to Estimation
+      </a>
+    </header>
+
+    <div class="row justify-content-center">
+      <div class="col-lg-8 col-xl-7">
+        <!-- Chat Container -->
+        <div id="chat-container" class="chat-container">
+          <!-- Messages will be added here -->
+          <div id="chat-messages" class="chat-messages">
+            <!-- Initial loading message -->
+            <div class="message bot-message">
+              <div class="message-avatar">🤖</div>
+              <div class="message-content">
+                <div class="message-bubble">
+                  <span class="typing-indicator">
+                    <span></span><span></span><span></span>
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Input Area -->
+          <div id="chat-input-area" class="chat-input-area">
+            <div class="input-group">
+              <textarea 
+                id="user-input" 
+                class="form-control chat-input" 
+                placeholder="Type your message here..."
+                rows="2"
+                disabled
+              ></textarea>
+              <button 
+                id="send-btn" 
+                class="btn btn-vodafone chat-send-btn" 
+                type="button"
+                disabled
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
+                </svg>
+              </button>
+            </div>
+            <small class="text-muted d-block mt-1">Press Enter to send, Shift+Enter for new line</small>
+          </div>
+        </div>
+
+        <!-- Status Messages -->
+        <div id="status-message" class="alert alert-info mt-3" style="display: none;"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="/static/chat.js"></script>
+</body>
+</html>

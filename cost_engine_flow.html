@@ -1,0 +1,952 @@
+<title>D2C Cost Estimation Engine — Flow</title>
+
+<style>
+  :root {
+    --bg:        #F2F5F6;
+    --surface:   #FFFFFF;
+    --surface-2: #E8EDEF;
+    --text:      #12181D;
+    --text-dim:  #5C6A73;
+    --rule:      #C9D2D6;
+    --rule-soft: #DDE4E7;
+    --alert:     #A63D2E;
+    --alert-bg:  #F7E9E5;
+    --signal:    #0E6E72;
+    --signal-bg: #E1EFEF;
+
+    --mono:  ui-monospace, "Cascadia Mono", "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+    --serif: Charter, "Bitstream Charter", "Sitka Text", Cambria, Georgia, serif;
+    --sans:  system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+    --step: clamp(0.9rem, 0.6rem + 1.1vw, 1.4rem);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:        #0E1418;
+      --surface:   #161E23;
+      --surface-2: #1D272D;
+      --text:      #E4EAED;
+      --text-dim:  #93A2AB;
+      --rule:      #2C383F;
+      --rule-soft: #222D33;
+      --alert:     #E0765F;
+      --alert-bg:  #2A1A16;
+      --signal:    #4FB8B9;
+      --signal-bg: #10262A;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:        #0E1418;
+    --surface:   #161E23;
+    --surface-2: #1D272D;
+    --text:      #E4EAED;
+    --text-dim:  #93A2AB;
+    --rule:      #2C383F;
+    --rule-soft: #222D33;
+    --alert:     #E0765F;
+    --alert-bg:  #2A1A16;
+    --signal:    #4FB8B9;
+    --signal-bg: #10262A;
+  }
+  :root[data-theme="light"] {
+    --bg:        #F2F5F6;
+    --surface:   #FFFFFF;
+    --surface-2: #E8EDEF;
+    --text:      #12181D;
+    --text-dim:  #5C6A73;
+    --rule:      #C9D2D6;
+    --rule-soft: #DDE4E7;
+    --alert:     #A63D2E;
+    --alert-bg:  #F7E9E5;
+    --signal:    #0E6E72;
+    --signal-bg: #E1EFEF;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--serif);
+    font-size: 1rem;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .sheet {
+    max-width: 68rem;
+    margin: 0 auto;
+    padding: clamp(1.25rem, 3vw, 3rem) clamp(1rem, 3vw, 2.5rem) 5rem;
+    display: flex;
+    flex-direction: column;
+    gap: clamp(2.5rem, 5vw, 4rem);
+  }
+
+  /* ---- title block ------------------------------------------------ */
+
+  .titleblock {
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+  .titleblock__main {
+    padding: clamp(1.25rem, 3vw, 2rem);
+    border-bottom: 1px solid var(--rule);
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.688rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  h1 {
+    font-family: var(--mono);
+    font-size: clamp(1.5rem, 1.1rem + 1.9vw, 2.5rem);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+    text-wrap: balance;
+    margin: 0;
+  }
+  .titleblock__standfirst {
+    max-width: 62ch;
+    color: var(--text-dim);
+    font-size: 1.0625rem;
+  }
+  .titleblock__meta {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  }
+  .metacell {
+    padding: 0.875rem clamp(1.25rem, 3vw, 2rem);
+    border-right: 1px solid var(--rule);
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .metacell:last-child { border-right: none; }
+  .metacell dt {
+    font-family: var(--mono);
+    font-size: 0.625rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  .metacell dd {
+    font-family: var(--mono);
+    font-size: 0.8125rem;
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---- sections --------------------------------------------------- */
+
+  section { display: flex; flex-direction: column; gap: 1.5rem; }
+
+  .sectionhead {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding-bottom: 0.875rem;
+    border-bottom: 2px solid var(--text);
+  }
+  h2 {
+    font-family: var(--mono);
+    font-size: clamp(1.125rem, 0.95rem + 0.7vw, 1.5rem);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 0;
+  }
+  .sectionhead p {
+    margin: 0;
+    max-width: 65ch;
+    color: var(--text-dim);
+    font-size: 0.9375rem;
+  }
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-family: var(--mono);
+    font-size: 0.625rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    padding: 0.2rem 0.5rem;
+    border: 1px solid currentColor;
+    align-self: flex-start;
+  }
+  .tag--alert  { color: var(--alert); }
+  .tag--signal { color: var(--signal); }
+
+  /* ---- flow spine ------------------------------------------------- */
+
+  .flow { display: flex; flex-direction: column; }
+
+  .stage {
+    display: grid;
+    grid-template-columns: 2.75rem 1fr;
+    gap: 0 1.125rem;
+    position: relative;
+  }
+  .stage__rail {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.375rem;
+  }
+  .stage__num {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    width: 2.25rem;
+    height: 2.25rem;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    color: var(--text);
+    flex: none;
+  }
+  .stage__line {
+    width: 1px;
+    flex: 1 1 auto;
+    background: var(--rule);
+    min-height: 1.25rem;
+  }
+  .stage:last-child .stage__line { background: transparent; }
+
+  .stage__body {
+    padding-bottom: 1.5rem;
+    min-width: 0;
+  }
+  .card {
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    padding: 1rem 1.125rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .card h3 {
+    font-family: var(--sans);
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    margin: 0;
+  }
+  .card p {
+    margin: 0;
+    font-size: 0.9375rem;
+    color: var(--text-dim);
+    max-width: 68ch;
+  }
+  .card code, .src {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    background: var(--surface-2);
+    padding: 0.1rem 0.35rem;
+    color: var(--text);
+  }
+  .src { color: var(--text-dim); }
+
+  .srcline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+    align-items: center;
+  }
+
+  /* accent variants */
+  .stage--alert  .stage__num { border-color: var(--alert); color: var(--alert); }
+  .stage--signal .stage__num { border-color: var(--signal); color: var(--signal); }
+  .stage--signal .card { border-left: 3px solid var(--signal); }
+  .stage--new .stage__num { background: var(--signal); border-color: var(--signal); color: var(--bg); }
+
+  /* defect chips */
+  .defects {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+    margin-top: 0.125rem;
+  }
+  .chip {
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.04em;
+    padding: 0.15rem 0.45rem;
+    border: 1px solid var(--alert);
+    color: var(--alert);
+    background: var(--alert-bg);
+    white-space: nowrap;
+  }
+  .chip--ok {
+    border-color: var(--signal);
+    color: var(--signal);
+    background: var(--signal-bg);
+  }
+
+  /* branch */
+  .branch {
+    border: 1px dashed var(--rule);
+    background: transparent;
+    padding: 0.875rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+  }
+  .branch__q {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  .branch__paths {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    gap: 0.625rem;
+  }
+  .path {
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    padding: 0.75rem 0.875rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+  .path__label {
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--signal);
+  }
+  .path__name { font-family: var(--sans); font-weight: 600; font-size: 0.9375rem; }
+  .path p { margin: 0; font-size: 0.875rem; color: var(--text-dim); }
+
+  /* ---- register table --------------------------------------------- */
+
+  .tablewrap {
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    background: var(--surface);
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 44rem;
+    font-family: var(--sans);
+    font-size: 0.875rem;
+  }
+  thead th {
+    text-align: left;
+    font-family: var(--mono);
+    font-size: 0.625rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    font-weight: 500;
+    padding: 0.75rem 0.875rem;
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+  tbody td {
+    padding: 0.7rem 0.875rem;
+    border-bottom: 1px solid var(--rule-soft);
+    vertical-align: top;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.id {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--alert);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  td.loc {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+  td.fix {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--signal);
+    white-space: nowrap;
+  }
+  .sev {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 0.625rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 0.12rem 0.4rem;
+    border: 1px solid currentColor;
+  }
+  .sev--hi  { color: var(--alert); }
+  .sev--med { color: var(--text-dim); }
+
+  /* ---- legend / notes --------------------------------------------- */
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.25rem;
+    padding: 0.875rem 1rem;
+    border: 1px solid var(--rule);
+    background: var(--surface-2);
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 0.45rem; }
+  .swatch { width: 0.75rem; height: 0.75rem; border: 1px solid currentColor; flex: none; }
+  .swatch--alert  { color: var(--alert);  background: var(--alert-bg); }
+  .swatch--signal { color: var(--signal); background: var(--signal-bg); }
+  .swatch--keep   { color: var(--rule);   background: var(--surface); }
+
+  .note {
+    border-left: 3px solid var(--alert);
+    background: var(--alert-bg);
+    padding: 0.875rem 1.125rem;
+    font-size: 0.9375rem;
+  }
+  .note strong { font-family: var(--sans); }
+  .note p { margin: 0; max-width: 68ch; }
+
+  footer {
+    border-top: 1px solid var(--rule);
+    padding-top: 1.25rem;
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 2rem;
+  }
+
+  a { color: var(--signal); }
+  a:focus-visible, :focus-visible {
+    outline: 2px solid var(--signal);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+
+  @media (max-width: 34rem) {
+    .stage { grid-template-columns: 2rem 1fr; gap: 0 0.75rem; }
+    .stage__num { width: 1.75rem; height: 1.75rem; font-size: 0.6875rem; }
+    .metacell { border-right: none; border-bottom: 1px solid var(--rule); }
+  }
+</style>
+
+<div class="sheet">
+
+  <!-- ============ TITLE BLOCK ============ -->
+  <header class="titleblock">
+    <div class="titleblock__main">
+      <div class="eyebrow">D2C · Design-to-Cost · Vodafone Egypt</div>
+      <h1>Cost Estimation Engine</h1>
+      <p class="titleblock__standfirst">
+        Execution flow of the parameter pricing engine as currently built, the defects that flow
+        exhibits, and the proposed evidence-based replacement.
+      </p>
+    </div>
+    <dl class="titleblock__meta">
+      <div class="metacell">
+        <dt>Subject</dt>
+        <dd>agents/cost_estimation.py</dd>
+      </div>
+      <div class="metacell">
+        <dt>Entry point</dt>
+        <dd>cost_estimation_from_internet</dd>
+      </div>
+      <div class="metacell">
+        <dt>Defects logged</dt>
+        <dd>12</dd>
+      </div>
+      <div class="metacell">
+        <dt>Status</dt>
+        <dd>As-built + proposal</dd>
+      </div>
+    </dl>
+  </header>
+
+  <div class="legend">
+    <span><i class="swatch swatch--keep"></i> Existing behaviour retained</span>
+    <span><i class="swatch swatch--alert"></i> Defect — see register</span>
+    <span><i class="swatch swatch--signal"></i> Proposed addition</span>
+  </div>
+
+  <!-- ============ SECTION A — AS BUILT ============ -->
+  <section>
+    <div class="sectionhead">
+      <span class="tag tag--alert">Sheet A — As built</span>
+      <h2>Current execution path</h2>
+      <p>
+        One cost parameter enters, one float leaves. Three queries produce a single concatenated
+        text blob, which one prompt converts directly into a number — there is no intermediate
+        representation of an individual price observation anywhere in the path.
+      </p>
+    </div>
+
+    <div class="flow">
+
+      <div class="stage">
+        <div class="stage__rail"><div class="stage__num">A1</div><div class="stage__line"></div></div>
+        <div class="stage__body">
+          <div class="card">
+            <h3>Locate the cost input in the structure</h3>
+            <p>Nested walk over <code>cost_drivers → cost_components → cost_inputs</code> to find the target, then branch on whether it already carries parameters.</p>
+            <div class="srcline"><span class="src">cost_estimation.py:1354</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="stage__rail"><div class="stage__num">A2</div><div class="stage__line"></div></div>
+        <div class="stage__body">
+          <div class="branch">
+            <div class="branch__q">Branch — does the input have cost_parameters?</div>
+            <div class="branch__paths">
+              <div class="path">
+                <span class="path__label">Yes — primary path</span>
+                <span class="path__name">Parameter-level estimation</span>
+                <p>Each parameter is priced individually, then the formula combines them. Continues at A3.</p>
+                <div class="srcline"><span class="src">_estimate_single_parameter · :177</span></div>
+              </div>
+              <div class="path">
+                <span class="path__label">No — fallback path</span>
+                <span class="path__name">ReAct agent, then Tavily fallback</span>
+                <p>A tool-using agent searches up to 4 rounds; if it fails, a single-query fallback estimates the input directly.</p>
+                <div class="srcline"><span class="src">:1378 · :1191</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage stage--alert">
+        <div class="stage__rail"><div class="stage__num">A3</div><div class="stage__line"></div></div>
+        <div class="stage__body">
+          <div class="card">
+            <h3>Read the declared pricing unit</h3>
+            <p>Re-walks the structure to recover the parameter's <code>unit</code>, defaulting to <code>"EGP per month"</code> when absent. This unit is passed to the prompt as an instruction but never machine-checked against the value that comes back.</p>
+            <div class="srcline"><span class="src">:194–207</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage stage--alert">
+        <div class="stage__rail"><div class="stage__num">A4</div><div class="stage__line"></div></div>
+        <div class="stage__body">
+          <div class="card">
+            <h3>Generate exactly three search queries</h3>
+            <p>Structured output fixed at three shapes: English price query, Egyptian Arabic translation, and a category/supplier list. No variation by specification, region, source type, or unit basis.</p>
+            <div class="defects"><span class="chip">D1 · fixed fan-out</span></div>
+            <div class="srcline"><span class="src">:209–249</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage stage--alert">
+        <div class="stage__rail"><div class="stage__num">A5</div><div class="stage__line"></div></div>
+        <div class="stage__body">
+          <div class="card">
+            <h3>Search and concatenate into one blob</h3>
+            <p>Tavily is called per query with <code>max_results=10</code> but only the first five results are read, and <code>include_raw_content=False</code> means only short snippets are captured — prices in tables and spec sheets are truncated away. Titles, URLs and snippets are appended into a single string.</p>
+            <div class="defects">
+              <span class="chip">D2 · snippets only</span>
+              <span class="chip">D3 · no observation records</span>
+            </div>
+            <div class="srcline"><span class="src">:251–263</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage stage--alert">
+        <div class="stage__rail"><div class="stage__num">A6</div><div class="stage__line"></div></div>
+        <div class="stage__body">
+          <div class="card">
+            <h3>Retrieve internal historical costs — then discard them</h3>
+            <p>FAISS <code>cost_value_faiss</code> returns ten similar historical records. The prompt then instructs the model not to let them influence the estimate; they survive only as a display-only <code>cost_from_internal_database</code> string.</p>
+            <div class="defects"><span class="chip">D9 · internal data excluded</span></div>
+            <div class="srcline"><span class="src">:285–290 · :306</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage stage--alert">
+        <div class="stage__rail"><div class="stage__num">A7</div><div class="stage__line"></div></div>
+        <div class="stage__body">
+          <div class="card">
+            <h3>Single prompt: blob in, float out</h3>
+            <p>Lineage, costs-so-far, internal records and the whole search blob are assembled into one prompt whose rules forbid abstention — <em>"You MUST return a non-zero value_egp… Never return 0."</em> Nothing verifies the retrieved item is the item being priced; the prompt instead encourages substituting adjacent categories and comparable roles.</p>
+            <div class="defects">
+              <span class="chip">D4 · no vintage handling</span>
+              <span class="chip">D6 · no SKU match check</span>
+              <span class="chip">D7 · abstention forbidden</span>
+            </div>
+            <div class="srcline"><span class="src">:293–329</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage stage--alert">
+        <div class="stage__rail"><div class="stage__num">A8</div><div class="stage__line"></div></div>
+        <div class="stage__body">
+          <div class="card">
+            <h3>Tool loop — currency and arithmetic</h3>
+            <p>Up to six iterations over <code>convert_to_egp_currency</code> and <code>calculator</code>. Conversion uses today's live rate regardless of when the source price was quoted, and silently falls back to hardcoded constants (<code>USD = 53.0</code>) when the API is unreachable. The rate actually used is never persisted, so the estimate cannot be reproduced.</p>
+            <div class="defects"><span class="chip">D5 · undated FX, unlogged</span></div>
+            <div class="srcline"><span class="src">:331–378 · :99–125</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage stage--alert">
+        <div class="stage__rail"><div class="stage__num">A9</div><div class="stage__line"></div></div>
+        <div class="stage__body">
+          <div class="card">
+            <h3>Structured extraction and write-back</h3>
+            <p>A second call produces value, justification, source URLs and a self-reported confidence label. The URLs are copied by the model out of the blob with no check that the cited page contains the cited number. Any exception collapses the result to <code>0.0</code>, which is indistinguishable downstream from a genuinely zero cost.</p>
+            <div class="defects">
+              <span class="chip">D8 · unverified citations</span>
+              <span class="chip">D10 · self-reported confidence</span>
+              <span class="chip">D11 · zero overloaded</span>
+            </div>
+            <div class="srcline"><span class="src">:380–435</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage stage--alert">
+        <div class="stage__rail"><div class="stage__num">A10</div><div class="stage__line"></div></div>
+        <div class="stage__body">
+          <div class="card">
+            <h3>Evaluate the cost-input formula</h3>
+            <p>Parameter values are substituted into the formula by name and evaluated. Unresolved placeholders are silently replaced with <code>0</code>, and a formula that legitimately evaluates to zero is overwritten by the sum of its parameters. Nothing is cached — the next run repeats every search from scratch.</p>
+            <div class="defects">
+              <span class="chip">D11 · zero overloaded</span>
+              <span class="chip">D12 · no caching</span>
+            </div>
+            <div class="srcline"><span class="src">evaluate_formula_for_input · :128–174</span></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ DEFECT REGISTER ============ -->
+  <section>
+    <div class="sectionhead">
+      <span class="tag tag--alert">Register</span>
+      <h2>Defect register</h2>
+      <p>Each defect keyed to its location in the as-built flow and to the proposed stage that resolves it.</p>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th><th>Defect</th><th>Location</th><th>Severity</th><th>Resolved by</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="id">D1</td>
+            <td>Query fan-out fixed at three shapes; no variation by spec, region, source type or unit basis</td>
+            <td class="loc">:236</td>
+            <td><span class="sev sev--med">Medium</span></td>
+            <td class="fix">P1</td>
+          </tr>
+          <tr>
+            <td class="id">D2</td>
+            <td>Snippets only; raw page content never fetched, and half the returned results discarded</td>
+            <td class="loc">:255</td>
+            <td><span class="sev sev--med">Medium</span></td>
+            <td class="fix">P2</td>
+          </tr>
+          <tr>
+            <td class="id">D3</td>
+            <td>No structured price observation exists — blocks normalization, comparison and aggregation alike</td>
+            <td class="loc">:251–263</td>
+            <td><span class="sev sev--hi">High</span></td>
+            <td class="fix">P3</td>
+          </tr>
+          <tr>
+            <td class="id">D4</td>
+            <td>No date or vintage handling; a 2021 and a 2026 price are treated as equivalent evidence</td>
+            <td class="loc">whole path</td>
+            <td><span class="sev sev--hi">High</span></td>
+            <td class="fix">P4</td>
+          </tr>
+          <tr>
+            <td class="id">D5</td>
+            <td>FX applied at today's rate, not the quote date; hardcoded fallbacks; rate never persisted</td>
+            <td class="loc">:99–125</td>
+            <td><span class="sev sev--hi">High</span></td>
+            <td class="fix">P4</td>
+          </tr>
+          <tr>
+            <td class="id">D6</td>
+            <td>No check that the retrieved item is the item being priced; substitution actively encouraged</td>
+            <td class="loc">:320</td>
+            <td><span class="sev sev--hi">High</span></td>
+            <td class="fix">P5</td>
+          </tr>
+          <tr>
+            <td class="id">D7</td>
+            <td>Abstention forbidden by prompt — model instructed to never return zero and to guess as a last resort</td>
+            <td class="loc">:318–321 · :1300</td>
+            <td><span class="sev sev--hi">High</span></td>
+            <td class="fix">P7</td>
+          </tr>
+          <tr>
+            <td class="id">D8</td>
+            <td>Source URLs copied by the model; no verification the page contains the attributed number</td>
+            <td class="loc">:316</td>
+            <td><span class="sev sev--med">Medium</span></td>
+            <td class="fix">P6</td>
+          </tr>
+          <tr>
+            <td class="id">D9</td>
+            <td>Internal historical actuals retrieved, then explicitly excluded from the estimate</td>
+            <td class="loc">:293 · :306</td>
+            <td><span class="sev sev--med">Medium</span></td>
+            <td class="fix">P6</td>
+          </tr>
+          <tr>
+            <td class="id">D10</td>
+            <td>Confidence self-reported by the model rather than derived from measurable evidence properties</td>
+            <td class="loc">:226</td>
+            <td><span class="sev sev--med">Medium</span></td>
+            <td class="fix">P6</td>
+          </tr>
+          <tr>
+            <td class="id">D11</td>
+            <td>Zero overloaded — calculator errors, unresolved placeholders and exceptions all produce 0.0</td>
+            <td class="loc">:81 · :165 · :397</td>
+            <td><span class="sev sev--hi">High</span></td>
+            <td class="fix">P7</td>
+          </tr>
+          <tr>
+            <td class="id">D12</td>
+            <td>No caching; every run re-searches every parameter from scratch</td>
+            <td class="loc">whole path</td>
+            <td><span class="sev sev--med">Medium</span></td>
+            <td class="fix">P8</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <p><strong>Root cause.</strong> D3 is upstream of most of the rest. Because no individual price
+      observation is ever materialised, there is nothing to date, nothing to convert, nothing to match
+      against the wanted item, and nothing to take a median over. Resolving it first unblocks D1, D2,
+      D4, D5, D6 and D8 together.</p>
+    </div>
+  </section>
+
+  <!-- ============ SECTION B — PROPOSED ============ -->
+  <section>
+    <div class="sectionhead">
+      <span class="tag tag--signal">Sheet B — Proposed</span>
+      <h2>Evidence-based execution path</h2>
+      <p>
+        The single prompt is decomposed into collect → normalize → judge → aggregate. The atomic unit
+        becomes the price observation rather than the final number, which makes every downstream
+        control possible and every estimate reproducible from stored evidence.
+      </p>
+    </div>
+
+    <div class="flow">
+
+      <div class="stage stage--new">
+        <div class="stage__rail"><div class="stage__num">P0</div><div class="stage__line"></div></div>
+        <div class="stage__body">
+          <div class="card">
+            <h3>Resolve the item specification</h3>
+            <p>Convert the parameter name into a structured spec — canonical item, category, price-driving attributes, required unit, region, import intensity. Serves as both the query seed and the matching key downstream.</p>
+            <div class="defects"><span class="chip chip--ok">new</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage stage--signal">
+        <div class="stage__rail"><div class="stage__num">P1</div><div class="stage__line"></div></div>
+        <div class="stage__body">
+          <div class="card">
+            <h3>Query fan-out along named axes</h3>
+            <p>Vary specificity, language, geography, source type and unit basis; generate eight to twelve, deduplicate, cap the budget. Agreement across independently phrased queries becomes a signal in its own right, feeding the confidence calculation at P6.</p>
+            <div class="defects"><span class="chip chip--ok">resolves D1</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage stage--signal">
+        <div class="stage__rail"><div class="stage__num">P2</div><div class="stage__line"></div></div>
+        <div class="stage__body">
+          <div class="card">
+            <h3>Retrieve and fetch real content</h3>
+            <p>Pull raw page content for promising hits rather than snippets alone, and use all returned results. Tag each source with a trust tier — vendor quote, marketplace, public tender, statistical bulletin.</p>
+            <div class="defects"><span class="chip chip--ok">resolves D2</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage stage--new">
+        <div class="stage__rail"><div class="stage__num">P3</div><div class="stage__line"></div></div>
+        <div class="stage__body">
+          <div class="card">
+            <h3>Extract structured price observations</h3>
+            <p>One record per price found, not one number per parameter: raw value, currency, unit basis, quote date, verbatim item description, source URL and type, inclusions (VAT / installation / warranty / delivery), quantity tier, region — plus the verbatim sentence containing the number, which makes attribution checkable at P6.</p>
+            <div class="defects"><span class="chip chip--ok">resolves D3 — root cause</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage stage--new">
+        <div class="stage__rail"><div class="stage__num">P4</div><div class="stage__line"></div></div>
+        <div class="stage__body">
+          <div class="card">
+            <h3>Normalize each observation</h3>
+            <p>Five independent adjustments, each logged as an explicit factor with a stated reason so the chain stays auditable: currency at the rate on the quote date; vintage escalated to present via an index; unit basis converted to the declared unit; scope stripped or grossed to one clean definition; quantity tier levelled.</p>
+            <p>For Egypt this is likely the largest single accuracy gain — the pound moved from roughly 15.7 to 50 per USD across 2022–24, and the correction differs by import intensity, since a prefabricated cabin tracks USD while a local wage does not.</p>
+            <div class="defects">
+              <span class="chip chip--ok">resolves D4</span>
+              <span class="chip chip--ok">resolves D5</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage stage--new">
+        <div class="stage__rail"><div class="stage__num">P5</div><div class="stage__line"></div></div>
+        <div class="stage__body">
+          <div class="card">
+            <h3>Grade SKU comparability</h3>
+            <p>Score each observation against the P0 spec and classify it exact, equivalent, analogous or unrelated. Cheap string filter first, embeddings second, model judgment only on borderline pairs. Only exact and equivalent enter the primary estimate; analogous enters solely with a stated adjustment factor and a confidence downgrade.</p>
+            <div class="defects"><span class="chip chip--ok">resolves D6</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage stage--new">
+        <div class="stage__rail"><div class="stage__num">P6</div><div class="stage__line"></div></div>
+        <div class="stage__body">
+          <div class="card">
+            <h3>Aggregate robustly, verify, cross-check</h3>
+            <p>Trimmed median with outlier rejection, weighted by source trust, match quality and recency, reported with an interquartile range rather than a bare point. Each citation is checked against the fetched text before it is kept. Internal historical actuals are normalized the same way and used as a sanity band and a disagreement flag. Confidence is computed from observation count, spread, match quality and vintage — not asked for.</p>
+            <div class="defects">
+              <span class="chip chip--ok">resolves D8</span>
+              <span class="chip chip--ok">resolves D9</span>
+              <span class="chip chip--ok">resolves D10</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage stage--new">
+        <div class="stage__rail"><div class="stage__num">P7</div><div class="stage__line"></div></div>
+        <div class="stage__body">
+          <div class="card">
+            <h3>Abstention gate</h3>
+            <p>Replace the forced float with an explicit status — <code>estimated</code>, <code>insufficient_evidence</code>, <code>needs_analyst_input</code> — gated on minimum qualifying observations, maximum spread and minimum match quality. When the gate fails, return what was searched and what was missing instead of a number, and surface it in the UI as a gap rather than a value.</p>
+            <div class="defects">
+              <span class="chip chip--ok">resolves D7</span>
+              <span class="chip chip--ok">resolves D11</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage stage--new">
+        <div class="stage__rail"><div class="stage__num">P8</div><div class="stage__line"></div></div>
+        <div class="stage__body">
+          <div class="card">
+            <h3>Cache observations, not answers</h3>
+            <p>Key on the normalized item spec and unit rather than the raw parameter name, which otherwise yields a near-zero hit rate as names vary between runs. Store the observations themselves so that a moved exchange rate or an improved escalation model can be re-applied without re-searching. Time-to-live varies by volatility class: import-linked hardware ages fast, local labour slowly.</p>
+            <div class="defects"><span class="chip chip--ok">resolves D12</span></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ SEQUENCING ============ -->
+  <section>
+    <div class="sectionhead">
+      <span class="tag tag--signal">Sequencing</span>
+      <h2>Suggested build order</h2>
+      <p>Ordered by unblocking value rather than by stage number.</p>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>Order</th><th>Stage</th><th>Rationale</th><th>Scope</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="id">1</td>
+            <td><strong>P3</strong> — structured observations</td>
+            <td>Prerequisite for most of the rest; contained refactor of a single function</td>
+            <td class="loc">1 function</td>
+          </tr>
+          <tr>
+            <td class="id">2</td>
+            <td><strong>P7</strong> — abstention gate</td>
+            <td>Largely deletion of harmful prompt instructions plus a status field</td>
+            <td class="loc">prompt + schema</td>
+          </tr>
+          <tr>
+            <td class="id">3</td>
+            <td><strong>P4</strong> — vintage and FX normalization</td>
+            <td>Largest expected accuracy gain given Egyptian currency movement</td>
+            <td class="loc">new module</td>
+          </tr>
+          <tr>
+            <td class="id">4</td>
+            <td><strong>P5 · P6</strong> — matching and aggregation</td>
+            <td>Depends on P3 records existing and P4 having levelled them</td>
+            <td class="loc">new module</td>
+          </tr>
+          <tr>
+            <td class="id">5</td>
+            <td><strong>P8</strong> — caching</td>
+            <td>Easiest to build, but pays off least until the cached evidence is worth keeping</td>
+            <td class="loc">store + TTL</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <p><strong>Before any of it.</strong> Assemble a small set of parameters with known or agreed
+      values and measure absolute percentage error, abstention rate and citation validity. Without a
+      baseline there is no way to tell whether a change helped — and these failure modes are
+      specifically the kind that survive a spot check.</p>
+    </div>
+  </section>
+
+  <footer>
+    <span>D2C — Design-to-Cost</span>
+    <span>Sheet A as-built · Sheet B proposed</span>
+    <span>Source: agents/cost_estimation.py</span>
+  </footer>
+
+</div>

@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Saved Estimations | Vodafone Egypt</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    .vodafone-dot { width: 18px; height: 18px; border-radius: 50%; background: #e60000; }
+    .text-vodafone { color: #e60000 !important; }
+    .border-vodafone { border-color: #e60000 !important; }
+    .bg-vodafone { background-color: #e60000 !important; }
+    .btn-vodafone { background-color: #e60000; color: #fff; border: none; }
+    .btn-vodafone:hover { background-color: #cc0000; color: #fff; }
+    .table-container { overflow-x: auto; }
+    .group-header { cursor: pointer; }
+    .group-header:hover { background-color: #f8f9fa; }
+    .badge-count { font-size: 0.75rem; }
+  </style>
+</head>
+<body>
+  <div class="container-fluid py-4">
+    <header class="d-flex align-items-center border-bottom border-2 border-vodafone pb-3 mb-4">
+      <div class="vodafone-dot me-3"></div>
+      <div>
+        <h1 class="h3 mb-0 text-vodafone fw-bold">Saved Estimations</h1>
+        <p class="text-muted small mb-0">Vodafone Egypt – Saved Estimations</p>
+      </div>
+      <a href="/" class="btn btn-outline-secondary btn-sm ms-auto">Back to Estimator</a>
+    </header>
+
+    <div id="loading" class="text-center py-5">
+      <div class="spinner-border text-danger" role="status"></div>
+      <p class="text-muted mt-2">Loading saved estimations...</p>
+    </div>
+
+    <div id="empty-state" class="text-center py-5 d-none">
+      <p class="text-muted">No estimations saved yet. Use "Export to DB" from the estimator to save data.</p>
+      <a href="/" class="btn btn-vodafone btn-sm mt-2">Go to Estimator</a>
+    </div>
+
+    <div id="content" class="d-none">
+      <div class="mb-3 d-flex align-items-center gap-2">
+        <label for="filter-activity" class="form-label mb-0 text-muted small">Filter by activity:</label>
+        <select id="filter-activity" class="form-select form-select-sm" style="width:auto;">
+          <option value="">All activities</option>
+        </select>
+      </div>
+
+      <div id="groups-container"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+  (function() {
+    var loading = document.getElementById('loading');
+    var emptyState = document.getElementById('empty-state');
+    var content = document.getElementById('content');
+    var groupsContainer = document.getElementById('groups-container');
+    var filterSelect = document.getElementById('filter-activity');
+    var allRows = [];
+
+    fetch('/api/estimations')
+      .then(function(res) { return res.json(); })
+      .then(function(data) {
+        loading.classList.add('d-none');
+        allRows = data;
+        if (!data.length) {
+          emptyState.classList.remove('d-none');
+          return;
+        }
+        content.classList.remove('d-none');
+        populateFilter(data);
+        renderGroups(data);
+      })
+      .catch(function(err) {
+        loading.innerHTML = '<p class="text-danger">Failed to load: ' + err.message + '</p>';
+      });
+
+    filterSelect.addEventListener('change', function() {
+      var val = filterSelect.value;
+      if (!val) {
+        renderGroups(allRows);
+      } else {
+        renderGroups(allRows.filter(function(r) { return r.activity_name === val; }));
+      }
+    });
+
+    function populateFilter(data) {
+      var seen = {};
+      data.forEach(function(r) {
+        var key = r.activity_name;
+        if (!seen[key]) {
+          seen[key] = true;
+          var opt = document.createElement('option');
+          opt.value = key;
+          opt.textContent = key;
+          filterSelect.appendChild(opt);
+        }
+      });
+    }
+
+    function renderGroups(rows) {
+      groupsContainer.innerHTML = '';
+      // Group by activity_name + exported_at
+      var groups = {};
+      var order = [];
+      rows.forEach(function(r) {
+        var key = r.activity_name + '|||' + r.exported_at;
+        if (!groups[key]) {
+          groups[key] = { name: r.activity_name, time: r.exported_at, rows: [] };
+          order.push(key);
+        }
+        groups[key].rows.push(r);
+      });
+
+      order.forEach(function(key, idx) {
+        var g = groups[key];
+        var card = document.createElement('div');
+        card.className = 'card mb-3';
+        var headerId = 'gh-' + idx;
+        var collapseId = 'gc-' + idx;
+        card.innerHTML =
+          '<div class="card-header group-header d-flex justify-content-between align-items-center" ' +
+          'data-bs-toggle="collapse" data-bs-target="#' + collapseId + '">' +
+            '<div>' +
+              '<strong class="text-vodafone">' + escHtml(g.name) + '</strong>' +
+              '<span class="text-muted small ms-3">' + escHtml(g.time) + '</span>' +
+            '</div>' +
+            '<span class="badge bg-secondary badge-count">' + g.rows.length + ' rows</span>' +
+          '</div>' +
+          '<div id="' + collapseId + '" class="collapse' + (idx === 0 ? ' show' : '') + '">' +
+            '<div class="card-body p-0 table-container">' +
+              buildTable(g.rows) +
+            '</div>' +
+          '</div>';
+        groupsContainer.appendChild(card);
+      });
+    }
+
+    var columns = [
+      'cost_driver', 'cost_driver_justification',
+      'cost_component', 'cost_component_justification', 'cost_component_quantity',
+      'cost_input', 'cost_input_justification', 'cost_input_quantity',
+      'cost_parameter', 'cost_parameter_justification',
+      'formula', 'cost', 'cost_status', 'cost_justification', 'cost_source'
+    ];
+
+    function buildTable(rows) {
+      var html = '<table class="table table-sm table-striped table-bordered mb-0" style="font-size:0.82rem;">';
+      html += '<thead class="table-dark"><tr>';
+      columns.forEach(function(c) {
+        html += '<th class="text-nowrap">' + escHtml(c.replace(/_/g, ' ')) + '</th>';
+      });
+      html += '</tr></thead><tbody>';
+      rows.forEach(function(r) {
+        html += '<tr>';
+        columns.forEach(function(c) {
+          var val = r[c] || '';
+          // Truncate long text for display
+          var display = val.length > 120 ? val.substring(0, 120) + '...' : val;
+          html += '<td title="' + escAttr(val) + '">' + escHtml(display) + '</td>';
+        });
+        html += '</tr>';
+      });
+      html += '</tbody></table>';
+      return html;
+    }
+
+    function escHtml(s) {
+      var d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function escAttr(s) {
+      return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+  })();
+  </script>
+</body>
+</html>
