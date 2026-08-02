@@ -107,13 +107,11 @@ from agents.deduplication import (
     deduplicate_parameters,
 )
 from agents.cost_parameter import validate_formula_units
-from agents.description_extraction import (
-    get_initial_greeting,
-    check_initial_description,
-    process_user_message,
-    generate_activity_description,
-    format_final_review_message,
-    REQUIRED_POINTS,
+from agents.activity_chat_graph import (
+    OPENING_MESSAGE,
+    activity_facts as chat_activity_facts,
+    new_session as new_chat_session,
+    run_turn as run_chat_turn,
 )
 from agents.session_title import generate_title
 
@@ -319,6 +317,10 @@ class EntityOperation(BaseModel):
 class ChatMessage(BaseModel):
     session_id: str
     message: str
+    #: Labels the user clicked, when the reply came from the option chips rather than the
+    #: text box. `message` still carries them joined as text, so a client that ignores
+    #: this field loses nothing.
+    selected_options: Optional[List[str]] = None
 
 
 class ChatResponse(BaseModel):
@@ -327,6 +329,11 @@ class ChatResponse(BaseModel):
     activity_description: Optional[str] = None
     activity_facts: Optional[dict] = None
     waiting_for_confirmation: bool = False
+    #: Clickable answers for the question just asked; empty when it wants free text.
+    #: The text box stays live either way — chips are a shortcut, never the only route.
+    options: List[str] = []
+    #: Render `options` as checkboxes plus a send button rather than one-click radios.
+    multi_select: bool = False
 
 
 class SessionCreate(BaseModel):
@@ -1433,83 +1440,42 @@ async def chat_page():
 async def chat_init():
     import uuid
     session_id = str(uuid.uuid4())
-    chat_sessions[session_id] = {
-        "state": "initial",
-        "answers": {p["id"]: None for p in REQUIRED_POINTS},
-        "current_point_id": None,
-        "last_asked_point_id": None,
-        "last_suggestion_hint": None,
-        "generated_description": None,
-    }
-    greeting = get_initial_greeting()
-    return {"session_id": session_id, "bot_message": greeting, "done": False}
+    chat_sessions[session_id] = new_chat_session()
+    return {"session_id": session_id, "bot_message": OPENING_MESSAGE, "done": False}
 
 
+# Deliberately `def`, not `async def`: the graph's LLM calls are blocking, and the
+# assessor runs on the reasoning tier. Left on the event loop a single slow turn would
+# stall every other request in the process; FastAPI runs sync routes in a threadpool.
 @app.post("/chat/message")
-async def chat_message(body: ChatMessage):
-    session_id = body.session_id
-    user_message = body.message.strip()
-
-    if session_id not in chat_sessions:
+def chat_message(body: ChatMessage):
+    if body.session_id not in chat_sessions:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    session = chat_sessions[session_id]
-    state = session["state"]
+    user_message = body.message.strip()
+    if not user_message:
+        return ChatResponse(bot_message="Could you tell me a bit more?", done=False)
 
-    if state == "initial":
-        if not user_message:
-            return ChatResponse(bot_message="Please provide a description of the activity.", done=False)
-        updated_answers, decision = check_initial_description(user_message)
-        session["answers"] = updated_answers
-        if decision.done:
-            session["state"] = "reviewing"
-            description = generate_activity_description(session["answers"])
-            session["generated_description"] = description
-            return ChatResponse(bot_message=format_final_review_message(description), done=False, waiting_for_confirmation=True)
-        session["state"] = "collecting"
-        session["current_point_id"] = decision.next_point_id
-        session["last_asked_point_id"] = decision.next_point_id
-        session["last_suggestion_hint"] = getattr(decision, "suggestion_hint", None)
-        return ChatResponse(bot_message=decision.question or "Could you provide more details?", done=False)
+    state = run_chat_turn(
+        chat_sessions[body.session_id], user_message, body.selected_options or []
+    )
+    chat_sessions[body.session_id] = state
 
-    elif state == "collecting":
-        if not user_message:
-            return ChatResponse(bot_message="Please share a bit more, or type 'skip' to move on.", done=False)
-        updated_answers, decision = process_user_message(
-            session["answers"],
-            user_message,
-            last_asked_point_id=session.get("last_asked_point_id"),
-            last_suggestion_hint=session.get("last_suggestion_hint"),
+    if state.get("done"):
+        return ChatResponse(
+            bot_message="Description ready — adding it to the estimator.",
+            done=True,
+            activity_description=state.get("description") or "",
+            activity_facts=chat_activity_facts(state),
         )
-        session["answers"] = updated_answers
-        if decision.done:
-            session["state"] = "reviewing"
-            description = generate_activity_description(session["answers"])
-            session["generated_description"] = description
-            session["last_asked_point_id"] = None
-            session["last_suggestion_hint"] = None
-            return ChatResponse(bot_message=format_final_review_message(description), done=False, waiting_for_confirmation=True)
-        session["current_point_id"] = decision.next_point_id
-        session["last_asked_point_id"] = decision.next_point_id
-        session["last_suggestion_hint"] = getattr(decision, "suggestion_hint", None)
-        return ChatResponse(bot_message=decision.question or "Could you provide more details?", done=False)
 
-    elif state == "reviewing":
-        user_lower = user_message.lower()
-        if user_lower in ("submit", "yes", "confirm", "proceed", "ok", "good"):
-            session["state"] = "confirmed"
-            return ChatResponse(
-                bot_message="Redirecting to cost estimation…",
-                done=True,
-                activity_description=session["generated_description"],
-                activity_facts={k: v for k, v in (session.get("answers") or {}).items() if v},
-            )
-        elif user_lower in ("edit", "change", "modify", "no"):
-            return ChatResponse(bot_message="Type the corrected activity description below.", done=False, waiting_for_confirmation=True)
-        session["generated_description"] = user_message
-        return ChatResponse(bot_message=format_final_review_message(user_message), done=False, waiting_for_confirmation=True)
-
-    return ChatResponse(bot_message="Something went wrong. Please refresh.", done=False)
+    return ChatResponse(
+        bot_message=state.get("bot_message") or "Could you tell me a bit more?",
+        done=False,
+        waiting_for_confirmation=state.get("phase") == "review",
+        options=list(state.get("options") or []),
+        multi_select=bool(state.get("multi_select")),
+    )
 
 
 if __name__ == "__main__":

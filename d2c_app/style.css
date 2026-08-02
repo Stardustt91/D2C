@@ -981,6 +981,10 @@ a:hover { color: var(--brand-strong); }
 .user-message .message-avatar { background: var(--brand); color: var(--on-brand); }
 .message-content { max-width: 76%; display: flex; }
 .user-message .message-content { justify-content: flex-end; }
+/* A bot message can hold a second child — the answer options — and this is a flex row,
+   which would sit them beside the bubble rather than under it. Only bot messages stack;
+   the user side stays a row so justify-content can push the bubble right. */
+.bot-message .message-content { flex-direction: column; align-items: flex-start; }
 .message-bubble {
   padding: 0.75rem 1rem;
   border-radius: var(--r-md);
@@ -1001,6 +1005,56 @@ a:hover { color: var(--brand-strong); }
 .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
 .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes typingBounce { 0%, 60%, 100% { transform: translateY(0); opacity: 0.6; } 30% { transform: translateY(-6px); opacity: 1; } }
+
+/* Clickable answers under an assistant question. Stacked rather than wrapped inline:
+   option text runs to a full clause ("Install on existing towers, Vodafone supplies the
+   equipment"), and inline pills turn that into a wall of lozenges of wildly uneven width.
+   A column of rows stays readable however long the labels get, and the radio/checkbox
+   marker makes the single- vs multi-select affordance explicit. */
+.chat-options { display: flex; flex-direction: column; align-items: flex-start; gap: 0.35rem; margin-top: 0.65rem; width: 100%; }
+.chat-option {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--text);
+  padding: 0.45rem 0.7rem;
+  font-family: inherit;
+  font-size: 0.83rem;
+  line-height: 1.4;
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+/* The marker is a pseudo-element so the label text wraps as one block beside it rather
+   than reflowing under the glyph. */
+.chat-option::before { content: '\25CB'; flex-shrink: 0; color: var(--text-faint); font-size: 0.9em; }
+.chat-options-multi .chat-option::before { content: '\2610'; }
+.chat-option:hover:not(:disabled) { border-color: var(--brand); background: var(--brand-soft); color: var(--brand); }
+.chat-option.selected { border-color: var(--brand); background: var(--brand-soft); color: var(--brand); font-weight: 500; }
+.chat-option.selected::before { content: '\25CF'; color: var(--brand); }
+.chat-options-multi .chat-option.selected::before { content: '\2611'; }
+.chat-options-confirm {
+  margin-top: 0.15rem;
+  border: 1px solid var(--brand);
+  border-radius: var(--r-md);
+  background: var(--brand);
+  color: var(--on-brand);
+  padding: 0.4rem 0.85rem;
+  font-family: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.chat-options-confirm:disabled { background: var(--surface-3); border-color: var(--border); color: var(--text-faint); cursor: not-allowed; }
+.chat-options.locked .chat-option, .chat-options.locked .chat-options-confirm { cursor: default; opacity: 0.5; }
+.chat-options.locked .chat-option:not(.selected) { background: transparent; border-color: var(--border); color: var(--text-faint); }
+/* Answered groups collapse to just the choice made: the rejected options have served
+   their purpose and leaving five dimmed rows per question buries the transcript. */
+.chat-options.locked.has-selection .chat-option:not(.selected) { display: none; }
 
 .chat-input-area { border-top: 1px solid var(--border); padding: 1rem 1.15rem; background: var(--surface); }
 .chat-input-row { display: flex; align-items: flex-end; gap: 0.6rem; }
