@@ -18,6 +18,7 @@ different machines or either side of a DST change impossible to order correctly.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import uuid
 from contextlib import closing
@@ -26,7 +27,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 ROOT = Path(__file__).resolve().parent.parent
-DB_PATH = ROOT / "d2c_exports.db"
+
+#: D2C_DB_PATH moves the database off the deployment directory. It has to be set
+#: anywhere the code is redeployed in place of being upgraded — on Azure App Service
+#: the application directory is replaced wholesale on every deploy, so a database
+#: left there loses every saved session. Point it at the persistent mount
+#: (/home/data/d2c/d2c_exports.db) to keep sessions across deploys and restarts.
+DB_PATH = Path(os.environ.get("D2C_DB_PATH", "").strip() or (ROOT / "d2c_exports.db"))
 
 #: Distinguishes "caller did not mention this field" from "caller set it to None".
 _UNSET: Any = object()
@@ -41,6 +48,9 @@ def _now() -> str:
 
 
 def _connect() -> sqlite3.Connection:
+    # SQLite creates the file but not the directory holding it, and D2C_DB_PATH
+    # routinely points at a mount that starts out empty.
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     # timeout: autosave from the browser can land while a long export is writing, and
     # waiting briefly is better than surfacing "database is locked" to the analyst.
     conn = sqlite3.connect(str(DB_PATH), timeout=10)

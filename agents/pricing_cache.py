@@ -68,6 +68,12 @@ _init_lock = threading.Lock()
 
 
 def _connect() -> sqlite3.Connection:
+    # SQLite will create the file but never the directory above it. When the path is
+    # pointed at a mount that starts empty — D2C_PRICE_CACHE=/home/data/d2c/... on
+    # Azure App Service — every connect raises "unable to open database file", and
+    # because _ensure_schema runs before the callers' try/except that surfaces on
+    # every cost parameter as a failed estimate rather than as a missing directory.
+    _db_path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(str(_db_path), timeout=30)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA journal_mode=WAL")

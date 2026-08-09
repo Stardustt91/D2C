@@ -254,18 +254,25 @@ def plan_queries(spec: ItemSpec, llm=None, n: int = MAX_QUERIES) -> List[str]:
 # --------------------------------------------------------------------------
 
 
-def run_searches(queries: List[str]) -> Tuple[List[dict], Dict[str, str]]:
+def run_searches(queries: List[str]) -> Tuple[List[dict], Dict[str, str], List[str]]:
     """
     Execute the fan-out.
 
-    Returns the deduplicated result records and a URL -> page text map used later
-    to verify that cited pages really contain the numbers attributed to them.
-    Raw page content is requested because prices sit in tables that snippets cut off.
+    Returns the deduplicated result records, a URL -> page text map used later to
+    verify that cited pages really contain the numbers attributed to them, and the
+    search errors encountered. Raw page content is requested because prices sit in
+    tables that snippets cut off.
+
+    The errors are returned rather than only logged because "the search engine was
+    unreachable" and "the web has no price for this" both arrive here as an empty
+    result list, and they call for completely different responses from whoever reads
+    the estimate. The reason has to travel with the abstention to tell them apart.
     """
     client = get_tavily()
     results: List[dict] = []
     page_texts: Dict[str, str] = {}
     seen_urls: set = set()
+    errors: List[str] = []
 
     for query in queries:
         try:
@@ -276,7 +283,8 @@ def run_searches(queries: List[str]) -> Tuple[List[dict], Dict[str, str]]:
                 search_depth="advanced",
             )
         except Exception as exc:
-            print(f"[pricing_engine] search failed for {query!r}: {exc}")
+            print(f"[pricing_engine] search failed for {query!r}: {type(exc).__name__}: {exc}")
+            errors.append(f"{type(exc).__name__}: {exc}")
             continue
 
         for item in response.get("results") or []:
@@ -296,7 +304,7 @@ def run_searches(queries: List[str]) -> Tuple[List[dict], Dict[str, str]]:
                 }
             )
 
-    return results, page_texts
+    return results, page_texts, errors
 
 
 # --------------------------------------------------------------------------
@@ -576,10 +584,21 @@ def estimate_parameter(
 
     if not cache_hit:
         queries = plan_queries(spec, llm=llm)
-        results, page_texts = run_searches(queries)
+        results, page_texts, search_errors = run_searches(queries)
         if not results:
+            if search_errors:
+                # Every query erroring is a broken search path, not an item the web
+                # has no price for. Naming the failure keeps it from being read as
+                # evidence that none exists.
+                distinct = list(dict.fromkeys(search_errors))[:3]
+                reason = (
+                    f"Web search is failing: all {len(queries)} queries errored. "
+                    f"{'; '.join(distinct)}"
+                )
+            else:
+                reason = "No search results were returned for any query."
             return last_resort(
-                _no_evidence(spec, queries, "No search results were returned for any query."),
+                _no_evidence(spec, queries, reason),
                 spec, internal_reference, llm=llm,
             )
         observations = extract_observations(spec, results, llm=llm)
