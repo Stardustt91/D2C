@@ -75,7 +75,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import Dict, Optional, List, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
 AGENTS_DIR = ROOT / "agents"
@@ -107,8 +107,9 @@ from agents.deduplication import (
     deduplicate_parameters,
 )
 from agents.cost_parameter import validate_formula_units
-from agents.activity_chat_graph import (
+from agents.activity_intake_chat import (
     OPENING_MESSAGE,
+    TOTAL_STEPS as CHAT_TOTAL_STEPS,
     activity_facts as chat_activity_facts,
     new_session as new_chat_session,
     run_turn as run_chat_turn,
@@ -317,10 +318,6 @@ class EntityOperation(BaseModel):
 class ChatMessage(BaseModel):
     session_id: str
     message: str
-    #: Labels the user clicked, when the reply came from the option chips rather than the
-    #: text box. `message` still carries them joined as text, so a client that ignores
-    #: this field loses nothing.
-    selected_options: Optional[List[str]] = None
 
 
 class ChatResponse(BaseModel):
@@ -328,12 +325,18 @@ class ChatResponse(BaseModel):
     done: bool = False
     activity_description: Optional[str] = None
     activity_facts: Optional[dict] = None
+    #: Everything the intake has captured so far, mirrored into the facts panel beside the
+    #: conversation. Sent on every turn, so the panel needs no state of its own.
+    facts: Dict[str, str] = {}
+    #: Fact keys the assistant deliberately left for the resource planner to derive.
+    pending: List[str] = []
+    #: Where the interview has reached, for the panel's progress line.
+    current_step: int = 1
+    step_name: str = ""
+    step_status: str = "in_progress"
+    total_steps: int = CHAT_TOTAL_STEPS
+    #: True once the assistant has finished step 8 and is waiting for "submit".
     waiting_for_confirmation: bool = False
-    #: Clickable answers for the question just asked; empty when it wants free text.
-    #: The text box stays live either way — chips are a shortcut, never the only route.
-    options: List[str] = []
-    #: Render `options` as checkboxes plus a send button rather than one-click radios.
-    multi_select: bool = False
 
 
 class SessionCreate(BaseModel):
@@ -1440,13 +1443,25 @@ async def chat_page():
 async def chat_init():
     import uuid
     session_id = str(uuid.uuid4())
-    chat_sessions[session_id] = new_chat_session()
-    return {"session_id": session_id, "bot_message": OPENING_MESSAGE, "done": False}
+    state = new_chat_session()
+    chat_sessions[session_id] = state
+    return {
+        "session_id": session_id,
+        "bot_message": OPENING_MESSAGE,
+        "done": False,
+        "facts": {},
+        "pending": [],
+        "current_step": state.get("current_step", 1),
+        "step_name": state.get("step_name", ""),
+        "step_status": state.get("step_status", "in_progress"),
+        "total_steps": CHAT_TOTAL_STEPS,
+    }
 
 
-# Deliberately `def`, not `async def`: the graph's LLM calls are blocking, and the
-# assessor runs on the reasoning tier. Left on the event loop a single slow turn would
-# stall every other request in the process; FastAPI runs sync routes in a threadpool.
+# Deliberately `def`, not `async def`: the intake model's calls are blocking, and the
+# submit turn additionally writes the description on the reasoning tier. Left on the event
+# loop a single slow turn would stall every other request in the process; FastAPI runs sync
+# routes in a threadpool.
 @app.post("/chat/message")
 def chat_message(body: ChatMessage):
     if body.session_id not in chat_sessions:
@@ -1456,25 +1471,34 @@ def chat_message(body: ChatMessage):
     if not user_message:
         return ChatResponse(bot_message="Could you tell me a bit more?", done=False)
 
-    state = run_chat_turn(
-        chat_sessions[body.session_id], user_message, body.selected_options or []
-    )
+    state = run_chat_turn(chat_sessions[body.session_id], user_message)
     chat_sessions[body.session_id] = state
+
+    facts = chat_activity_facts(state)
+    # The panel is redrawn wholesale from every response, including the last one, so a
+    # session that ends still shows what it ended with.
+    panel = {
+        "facts": facts,
+        "pending": list(state.get("pending") or []),
+        "current_step": int(state.get("current_step") or 1),
+        "step_name": state.get("step_name") or "",
+        "step_status": state.get("step_status") or "in_progress",
+        "waiting_for_confirmation": state.get("phase") == "review",
+    }
 
     if state.get("done"):
         return ChatResponse(
             bot_message="Description ready — adding it to the estimator.",
             done=True,
             activity_description=state.get("description") or "",
-            activity_facts=chat_activity_facts(state),
+            activity_facts=facts,
+            **panel,
         )
 
     return ChatResponse(
         bot_message=state.get("bot_message") or "Could you tell me a bit more?",
         done=False,
-        waiting_for_confirmation=state.get("phase") == "review",
-        options=list(state.get("options") or []),
-        multi_select=bool(state.get("multi_select")),
+        **panel,
     )
 
 

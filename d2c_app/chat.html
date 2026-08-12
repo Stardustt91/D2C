@@ -22,46 +22,67 @@
     </header>
 
     <div class="row justify-content-center">
-      <div class="col-lg-8 col-xl-7">
-        <!-- Chat Container -->
-        <div id="chat-container" class="chat-container">
-          <!-- Messages will be added here -->
-          <div id="chat-messages" class="chat-messages">
-            <!-- Initial loading message -->
-            <div class="message bot-message">
-              <div class="message-avatar">🤖</div>
-              <div class="message-content">
-                <div class="message-bubble">
-                  <span class="typing-indicator">
-                    <span></span><span></span><span></span>
-                  </span>
+      <div class="col-lg-10 col-xl-9">
+        <div class="assistant-body assistant-body-standalone">
+          <!-- Facts drawer: a permanent rail on the left edge that opens into a table of
+               everything the assistant has captured so far. -->
+          <aside class="facts-rail" id="facts-rail">
+            <button type="button" class="facts-handle" id="facts-handle" aria-expanded="false" aria-controls="facts-panel" title="Captured facts">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M10 10v10"/></svg>
+              <span class="facts-handle-label">Facts</span>
+              <span class="facts-handle-count" id="facts-count" hidden>0</span>
+            </button>
+            <div class="facts-panel" id="facts-panel">
+              <div class="facts-panel-head">
+                <strong>Captured facts</strong>
+                <small id="facts-step">Step 1 of 8 · General Service Definition</small>
+              </div>
+              <div class="facts-panel-body" id="facts-body">
+                <p class="facts-empty">Nothing captured yet. Everything you confirm appears here.</p>
+              </div>
+            </div>
+          </aside>
+
+          <!-- Chat Container -->
+          <div id="chat-container" class="chat-container">
+            <!-- Messages will be added here -->
+            <div id="chat-messages" class="chat-messages">
+              <!-- Initial loading message -->
+              <div class="message bot-message">
+                <div class="message-avatar">🤖</div>
+                <div class="message-content">
+                  <div class="message-bubble">
+                    <span class="typing-indicator">
+                      <span></span><span></span><span></span>
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
 
-          <!-- Input Area -->
-          <div id="chat-input-area" class="chat-input-area">
-            <div class="input-group">
-              <textarea 
-                id="user-input" 
-                class="form-control chat-input" 
-                placeholder="Type your message here..."
-                rows="2"
-                disabled
-              ></textarea>
-              <button 
-                id="send-btn" 
-                class="btn btn-vodafone chat-send-btn" 
-                type="button"
-                disabled
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
-                </svg>
-              </button>
+            <!-- Input Area -->
+            <div id="chat-input-area" class="chat-input-area">
+              <div class="input-group">
+                <textarea
+                  id="user-input"
+                  class="form-control chat-input"
+                  placeholder="Type your message here..."
+                  rows="2"
+                  disabled
+                ></textarea>
+                <button
+                  id="send-btn"
+                  class="btn btn-vodafone chat-send-btn"
+                  type="button"
+                  disabled
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
+                  </svg>
+                </button>
+              </div>
+              <small class="text-muted d-block mt-1">Press Enter to send, Shift+Enter for new line</small>
             </div>
-            <small class="text-muted d-block mt-1">Press Enter to send, Shift+Enter for new line</small>
           </div>
         </div>
 

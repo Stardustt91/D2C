@@ -86,7 +86,7 @@ note under the grand total, and exported in the `cost_status` column. Set
 | `d2c_app/sessions_db.py` | SQLite store for estimation sessions (schema + CRUD helpers) |
 | `d2c_app/sessions.js` | Sidebar session list, rename/delete, and the debounced autosave |
 | `agents/session_title.py` | LLM agent: activity description → short session title |
-| `d2c_app/chat.html` + `chat.js` | Conversational assistant for building activity descriptions |
+| `d2c_app/chat.html` + `chat.js` | Conversational assistant for building activity descriptions, plus the facts drawer |
 | `d2c_app/export.js` | Excel (2 sheets: "Cost Estimation" + "Resources"), PowerPoint and database export |
 | `agents/env_config.py` | Loads `.env`; the only place credentials/endpoints enter the process. Builds all LLM + embeddings clients |
 | `agents/resource_planner.py` | LLM agent: activity → resourcing & scaling plan (quantities, scaling classes, critic pass) |
@@ -97,7 +97,8 @@ note under the grand total, and exported in the `cost_status` column. Set
 | `agents/cost_inputs.py` | LLM agent: component → cost inputs |
 | `agents/cost_parameter.py` | LLM agent: input → cost parameters + formulas |
 | `agents/cost_estimation.py` | LLM agent: parameters → final EGP cost with sources |
-| `agents/description_extraction.py` | Multi-turn chat agent for activity description refinement |
+| `agents/activity_intake_chat.py` | The AI Assistant: 8-step intake interview → facts → activity description |
+| `agents/description_extraction.py` | Superseded questionnaire flow; kept only for its CLI |
 | `agents/structure_formatter.py` | Unified display formatter for any stage of the hierarchy |
 | `agents/workflow_test.py` | CLI end-to-end test script |
 | `new_vector_dbs/` | FAISS vector stores (one per hierarchy level) used for RAG |
@@ -116,6 +117,59 @@ note under the grand total, and exported in the `cost_status` column. Set
 - `GET /chat` — Chat UI
 - `POST /chat/init` — Initialize chat session
 - `POST /chat/message` — Handle chat turn
+
+### The AI Assistant (activity intake)
+
+`agents/activity_intake_chat.py` runs an eight-step cost-modelling interview — service
+definition, roles & staffing, working days, supervision, employment costs, operational
+requirements, overheads & profit, finalisation. The workflow *is* the system prompt
+(`WORKFLOW_PROMPT`), so the model holds the whole conversation itself: one question at a
+time, free text only, no option chips.
+
+**Nothing is appended to that prompt, and nothing should be.** It is byte-identical to the
+workflow document; everything the app needs on top of it is carried by the output schema's
+field descriptions and by code (`OPENING_MESSAGE`, `REVIEW_HINT` and `_is_submit` are the
+app's own words and logic, and never enter the model's context — history starts empty). The
+only thing the model is told beyond the workflow is today's date, and that goes in as its
+own system message ahead of it (`_today_message`, computed per call so a long-running server
+doesn't go stale) — without it, asked in Step 1 for a start date, it answers "next month"
+with a date a year out. This
+is a rule with a scar behind it: a block instructing the model to record only what the user
+had explicitly stated, read next to the workflow's "Ask where the service(s) will be
+delivered (country and region or city)", made it ask an analyst who had said "Cairo" which
+country Cairo is in. House rules get read in the context of the workflow's own wording, and
+what they do there is hard to predict. Test any prompt change against a real conversation.
+
+It runs on its own Azure deployment — the **intake tier**, `gpt-chat-latest` — because it is
+the only model in the system with a person waiting in real time on the other end.
+
+Every turn returns a `ChatbotTurn`: the reply, where in the eight steps it is, and the
+complete accumulated `facts` as `canonical_key -> value`. Facts are **merged, never
+replaced** (`_merge_facts`) — the schema asks for the full set each turn, but a turn that
+returns only what changed must not erase steps 1–7. Merging alone leaves a wart: the model
+renames its own keys (`service` for what it earlier called `service_description`) and both
+survive, showing one fact twice. A held key the turn did not return, whose value duplicates
+one it did, is treated as that rename and dropped — but only for values of at least
+`_ALIAS_MIN_LENGTH` characters, because "No" answers half the workflow's questions and
+collapsing on it would destroy real facts. They are mirrored live into the **facts
+drawer**, a rail on the left of the assistant window that opens into a read-only table; the
+panel is redrawn wholesale from every response, so it holds no state and cannot drift from
+the server's.
+
+The analyst ends the intake by typing **submit** (accepted at any point once facts exist —
+eight steps is a long interview and there has to be a way out). Once the model reports the
+last step finished, `REVIEW_HINT` is appended to its reply by the app to say so. Bare
+confirmations like "yes" or "confirmed" count as submit *only* after step 8 is declared complete,
+because the workflow requires explicit confirmation whenever it applies a default and a
+mid-flow "confirmed" would otherwise end the interview. On submit the facts — and only the
+facts — go to the **reasoning tier** (`generate_activity_description`), which rewrites them
+as the activity description; it runs once, off the critical path, and its output is the sole
+input to the estimation pipeline. The facts dict also flows on as `activity_facts` to the
+resource planner.
+
+Two files the prompt names as preferred sources, `Working Days.xlsx` and
+`National Statistics.xlsx`, are not in the repo; the model falls back to its own defaults for
+those and must have them confirmed by the analyst.
 
 ### Sessions
 
@@ -201,10 +255,11 @@ All credentials come from the environment via `agents/env_config.py`, which load
 
 Keys are required and fail loudly at import (`MissingCredential`, naming the variable) rather than
 surfacing as a 401 mid-workflow. Endpoints, deployment names and API versions are optional and
-default to the values the code previously hardcoded. Three non-interchangeable Azure deployments:
-`chat` (gpt-4o-mini, structure steps), `reasoning` (gpt-5, planner/parameters/estimation/pricing),
-and `embeddings` (text-embedding-3-large, the FAISS retrievers). Each has its own API version —
-gpt-5 needs a newer one than gpt-4o-mini, so they are deliberately not shared.
+default to the values the code previously hardcoded. Four non-interchangeable Azure deployments:
+`chat` (gpt-4o-mini, structure steps), `reasoning` (gpt-5, planner/parameters/estimation/pricing/
+description write-up), `intake` (gpt-chat-latest, the AI Assistant interview), and `embeddings`
+(text-embedding-3-large, the FAISS retrievers). Each has its own API version — gpt-5 and
+gpt-chat-latest need newer ones than gpt-4o-mini, so they are deliberately not shared.
 
 ## Documentation Files
 

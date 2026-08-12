@@ -981,9 +981,6 @@ a:hover { color: var(--brand-strong); }
 .user-message .message-avatar { background: var(--brand); color: var(--on-brand); }
 .message-content { max-width: 76%; display: flex; }
 .user-message .message-content { justify-content: flex-end; }
-/* A bot message can hold a second child — the answer options — and this is a flex row,
-   which would sit them beside the bubble rather than under it. Only bot messages stack;
-   the user side stays a row so justify-content can push the bubble right. */
 .bot-message .message-content { flex-direction: column; align-items: flex-start; }
 .message-bubble {
   padding: 0.75rem 1rem;
@@ -1000,61 +997,21 @@ a:hover { color: var(--brand-strong); }
 .message-bubble code { background: var(--surface-3); padding: 0.1rem 0.35rem; border-radius: 4px; font-family: Consolas, monospace; font-size: 0.86em; }
 .user-message .message-bubble code { background: rgba(255,255,255,0.22); }
 
+/* The workflow tells the assistant to present interim results as tables rather than text
+   blocks, so it emits markdown pipe tables. Rendered, with the scroll kept inside the
+   wrapper so a wide table never widens the conversation column. */
+.bot-message.has-table .message-content { max-width: 96%; }
+.chat-table-wrap { overflow-x: auto; margin: 0.15rem 0; }
+.chat-table { border-collapse: collapse; font-size: 0.83rem; white-space: nowrap; }
+.chat-table th, .chat-table td { padding: 0.34rem 0.7rem 0.34rem 0; text-align: left; border-bottom: 1px solid var(--border); }
+.chat-table th { font-weight: 600; color: var(--text-muted); }
+.chat-table tr:last-child td { border-bottom: none; }
+
 .typing-indicator { display: inline-flex; gap: 4px; align-items: center; padding: 0.2rem 0; }
 .typing-indicator span { width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); animation: typingBounce 1.4s infinite; }
 .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
 .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes typingBounce { 0%, 60%, 100% { transform: translateY(0); opacity: 0.6; } 30% { transform: translateY(-6px); opacity: 1; } }
-
-/* Clickable answers under an assistant question. Stacked rather than wrapped inline:
-   option text runs to a full clause ("Install on existing towers, Vodafone supplies the
-   equipment"), and inline pills turn that into a wall of lozenges of wildly uneven width.
-   A column of rows stays readable however long the labels get, and the radio/checkbox
-   marker makes the single- vs multi-select affordance explicit. */
-.chat-options { display: flex; flex-direction: column; align-items: flex-start; gap: 0.35rem; margin-top: 0.65rem; width: 100%; }
-.chat-option {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-  max-width: 100%;
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  background: var(--surface);
-  color: var(--text);
-  padding: 0.45rem 0.7rem;
-  font-family: inherit;
-  font-size: 0.83rem;
-  line-height: 1.4;
-  text-align: left;
-  white-space: normal;
-  cursor: pointer;
-  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
-}
-/* The marker is a pseudo-element so the label text wraps as one block beside it rather
-   than reflowing under the glyph. */
-.chat-option::before { content: '\25CB'; flex-shrink: 0; color: var(--text-faint); font-size: 0.9em; }
-.chat-options-multi .chat-option::before { content: '\2610'; }
-.chat-option:hover:not(:disabled) { border-color: var(--brand); background: var(--brand-soft); color: var(--brand); }
-.chat-option.selected { border-color: var(--brand); background: var(--brand-soft); color: var(--brand); font-weight: 500; }
-.chat-option.selected::before { content: '\25CF'; color: var(--brand); }
-.chat-options-multi .chat-option.selected::before { content: '\2611'; }
-.chat-options-confirm {
-  margin-top: 0.15rem;
-  border: 1px solid var(--brand);
-  border-radius: var(--r-md);
-  background: var(--brand);
-  color: var(--on-brand);
-  padding: 0.4rem 0.85rem;
-  font-family: inherit;
-  font-size: 0.82rem;
-  cursor: pointer;
-}
-.chat-options-confirm:disabled { background: var(--surface-3); border-color: var(--border); color: var(--text-faint); cursor: not-allowed; }
-.chat-options.locked .chat-option, .chat-options.locked .chat-options-confirm { cursor: default; opacity: 0.5; }
-.chat-options.locked .chat-option:not(.selected) { background: transparent; border-color: var(--border); color: var(--text-faint); }
-/* Answered groups collapse to just the choice made: the rejected options have served
-   their purpose and leaving five dimmed rows per question buries the transcript. */
-.chat-options.locked.has-selection .chat-option:not(.selected) { display: none; }
 
 .chat-input-area { border-top: 1px solid var(--border); padding: 1rem 1.15rem; background: var(--surface); }
 .chat-input-row { display: flex; align-items: flex-end; gap: 0.6rem; }
@@ -1093,6 +1050,106 @@ a:hover { color: var(--brand-strong); }
 .chat-status.alert-danger { background: var(--brand-soft); color: var(--brand); }
 
 /* ============================================================
+   Facts drawer
+   The intake assistant's working memory, shown beside the conversation so the analyst
+   can watch it accumulate. The handle rail is always visible; opening it slides the
+   table out from the left. On the floating window the window itself widens to make
+   room (see .assistant-window.facts-open) rather than the conversation giving up width.
+   ============================================================ */
+.assistant-body { display: flex; flex: 1; min-height: 0; position: relative; }
+.assistant-body-standalone { align-items: stretch; }
+
+.facts-rail {
+  display: flex;
+  flex-shrink: 0;
+  width: 46px;
+  overflow: hidden;
+  background: var(--surface-2);
+  border-right: 1px solid var(--border);
+  transition: width 0.24s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.facts-rail.open { width: 306px; }
+/* The standalone page draws its own frame around the chat container, so the rail has to
+   carry the matching left half of it. */
+.assistant-body-standalone .facts-rail { border: 1px solid var(--border); border-right: none; border-radius: var(--r-md) 0 0 var(--r-md); }
+.assistant-body-standalone .chat-container { flex: 1; min-width: 0; border-radius: 0 var(--r-md) var(--r-md) 0; }
+.assistant-body-standalone .chat-input-area { border-radius: 0 0 var(--r-md) 0; }
+
+.facts-handle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  flex-shrink: 0;
+  width: 46px;
+  padding: 0.85rem 0;
+  border: none;
+  border-right: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.facts-handle:hover { background: var(--surface-3); color: var(--text); }
+.facts-handle svg { width: 19px; height: 19px; flex-shrink: 0; }
+/* Bottom-to-top, so the word reads upward along the rail rather than upside down. */
+.facts-handle-label {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.facts-handle-count {
+  min-width: 20px;
+  padding: 0.05rem 0.3rem;
+  border-radius: var(--r-pill);
+  background: var(--brand);
+  color: var(--on-brand);
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.facts-handle-count[hidden] { display: none; }
+.facts-rail.open .facts-handle { background: var(--surface-3); color: var(--brand); border-right-color: var(--border); }
+
+.facts-panel {
+  display: flex;
+  flex-direction: column;
+  width: 260px;
+  flex-shrink: 0;
+  min-height: 0;
+}
+.facts-panel-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.8rem 0.9rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+}
+.facts-panel-head strong { font-size: 0.85rem; font-weight: 600; }
+.facts-panel-head small { font-size: 0.71rem; color: var(--text-muted); line-height: 1.35; }
+.facts-panel-body { flex: 1; overflow-y: auto; padding: 0.75rem 0.9rem 1rem; }
+.facts-empty { margin: 0; font-size: 0.78rem; line-height: 1.5; color: var(--text-faint); }
+
+/* Two columns rather than a key/value list: the eye needs a single left edge to run
+   down when there are twenty-odd facts, and the values wrap freely beside it. */
+.facts-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; line-height: 1.45; }
+.facts-table th,
+.facts-table td { padding: 0.4rem 0 0.45rem; vertical-align: top; text-align: left; border-bottom: 1px solid var(--border); }
+.facts-table th { width: 42%; padding-right: 0.55rem; font-weight: 500; color: var(--text-muted); }
+.facts-table td { color: var(--text); word-break: break-word; }
+.facts-table tr:last-child th, .facts-table tr:last-child td { border-bottom: none; }
+/* A value that changed this turn, so a correction is visible without re-reading the table. */
+.facts-table tr.facts-row-new td { animation: factIn 1.6s ease-out; }
+@keyframes factIn { from { background: var(--brand-soft); } to { background: transparent; } }
+
+.facts-pending { margin-top: 0.9rem; padding-top: 0.7rem; border-top: 1px solid var(--border); }
+.facts-pending-title { font-size: 0.68rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
+.facts-pending ul { margin: 0.4rem 0 0; padding-left: 1rem; font-size: 0.76rem; line-height: 1.5; color: var(--text-muted); }
+
+/* ============================================================
    Floating AI Assistant window
    ============================================================ */
 .assistant-scrim {
@@ -1113,6 +1170,7 @@ a:hover { color: var(--brand-strong); }
      wider window cannot push itself off-screen on a small laptop. */
   width: min(710px, calc(100vw - 2rem));
   height: min(660px, calc(100dvh - 3rem));
+  transition: width 0.24s cubic-bezier(0.4, 0, 0.2, 1);
   display: flex;
   flex-direction: column;
   background: var(--surface);
@@ -1157,7 +1215,10 @@ a:hover { color: var(--brand-strong); }
 .assistant-close:hover { background: var(--surface-3); color: var(--text); }
 .assistant-close svg { width: 18px; height: 18px; }
 
-.assistant-window .chat-container { flex: 1; height: auto; min-height: 0; border: none; border-radius: 0; background: transparent; }
+/* Anchored bottom-right, so extra width grows leftwards — the drawer opens into new
+   space instead of taking it off the conversation. */
+.assistant-window.facts-open { width: min(1016px, calc(100vw - 2rem)); }
+.assistant-window .chat-container { flex: 1; min-width: 0; height: auto; min-height: 0; border: none; border-radius: 0; background: transparent; }
 .assistant-window .chat-status { margin: 0 1rem 1rem; }
 
 /* Scrim for mobile drawer */
@@ -1205,13 +1266,25 @@ a:hover { color: var(--brand-strong); }
   .topbar-titles h1 { font-size: 1.15rem; }
 
   /* Assistant becomes a near-fullscreen sheet with a scrim on phones. */
-  .assistant-window {
+  .assistant-window,
+  .assistant-window.facts-open {
     right: 0; bottom: 0; left: 0;
     width: 100%;
     height: 90dvh;
     border-radius: var(--r-lg) var(--r-lg) 0 0;
   }
   .app-shell.assistant-open .assistant-scrim { opacity: 1; visibility: visible; }
+
+  /* No spare width to grow into, so the drawer floats over the conversation instead of
+     squeezing it down to a column too narrow to read. */
+  .facts-rail.open {
+    position: absolute;
+    top: 0; bottom: 0; left: 0;
+    width: min(320px, 88%);
+    z-index: 5;
+    box-shadow: var(--shadow-lg);
+  }
+  .facts-rail.open .facts-panel { width: auto; flex: 1; min-width: 0; }
 }
 
 /* Reduced motion */

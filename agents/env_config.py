@@ -13,13 +13,14 @@ an LLM call with an opaque 401. Non-secret configuration — endpoints, deployme
 names, API versions — keeps the literal it had before as its default, so an existing
 checkout only needs the keys supplied to keep working exactly as it did.
 
-Three Azure OpenAI deployments are in play, and they are not interchangeable:
+Four Azure OpenAI deployments are in play, and they are not interchangeable:
 
     chat        gpt-4o-mini             cheap structure generation: drivers,
-                                        components, inputs, deduplication, and the
-                                        chat description extractor
+                                        components, inputs, deduplication
     reasoning   gpt-5                   steps that must deliberate: resource planner,
                                         cost parameters, cost estimation, pricing engine
+    intake      gpt-chat-latest         the activity-intake conversation — the one place
+                                        a person is on the other end of the call
     embeddings  text-embedding-3-large  the FAISS retrievers used for RAG
 
 Each tier carries its own API version variable rather than sharing one, because the
@@ -153,6 +154,38 @@ def reasoning_llm(
         api_key=api_key or reasoning_key(),
         reasoning_effort=reasoning_effort,
         max_completion_tokens=max_completion_tokens,
+        **kwargs,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Azure OpenAI — intake tier (gpt-chat-latest)
+# ---------------------------------------------------------------------------
+
+INTAKE_ENDPOINT = optional(
+    "AZURE_OPENAI_INTAKE_ENDPOINT", default="https://lifestyleenhanced.openai.azure.com/"
+)
+INTAKE_DEPLOYMENT = optional("AZURE_OPENAI_INTAKE_DEPLOYMENT", default="gpt-chat-latest")
+# Its own version for the same reason the reasoning tier has one: this deployment is a
+# newer model than gpt-4o-mini and does not run on the chat tier's API version.
+INTAKE_API_VERSION = optional(
+    "AZURE_OPENAI_INTAKE_API_VERSION", default="2024-12-01-preview"
+)
+
+
+def intake_llm(**kwargs) -> AzureChatOpenAI:
+    """Client for the activity-intake conversation.
+
+    Deliberately passes no ``temperature`` or token cap. This deployment sits between an
+    analyst pressing send and the next question appearing, and it is the only model in the
+    system talking to a person rather than to another prompt — its own defaults are what
+    the interview was written and tuned against.
+    """
+    return AzureChatOpenAI(
+        deployment_name=INTAKE_DEPLOYMENT,
+        openai_api_version=INTAKE_API_VERSION,
+        azure_endpoint=INTAKE_ENDPOINT,
+        api_key=require("AZURE_OPENAI_INTAKE_API_KEY"),
         **kwargs,
     )
 
