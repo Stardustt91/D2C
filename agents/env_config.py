@@ -13,15 +13,17 @@ an LLM call with an opaque 401. Non-secret configuration — endpoints, deployme
 names, API versions — keeps the literal it had before as its default, so an existing
 checkout only needs the keys supplied to keep working exactly as it did.
 
-Four Azure OpenAI deployments are in play, and they are not interchangeable:
+Five Azure OpenAI deployments are in play, and they are not interchangeable:
 
-    chat        gpt-4o-mini             cheap structure generation: drivers,
-                                        components, inputs, deduplication
-    reasoning   gpt-5                   steps that must deliberate: resource planner,
-                                        cost parameters, cost estimation, pricing engine
-    intake      gpt-chat-latest         the activity-intake conversation — the one place
-                                        a person is on the other end of the call
-    embeddings  text-embedding-3-large  the FAISS retrievers used for RAG
+    chat          gpt-4o-mini             cheap structure generation: drivers,
+                                          components, inputs, deduplication
+    reasoning     gpt-5                   steps that must deliberate: resource planner,
+                                          cost parameters, cost estimation, pricing engine
+    conversation  gpt-5.2-chat            every turn of the activity-intake interview —
+                                          the one place a person is waiting on the call
+    writer        gpt-5                   the activity description the interview ends on,
+                                          and the rewrites made to it during review
+    embeddings    text-embedding-3-large  the FAISS retrievers used for RAG
 
 Each tier carries its own API version variable rather than sharing one, because the
 versions genuinely differ: gpt-5 needs a newer API version than gpt-4o-mini, and
@@ -37,7 +39,7 @@ from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
-from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
+from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings, ChatOpenAI
 
 #: Repository root. This file lives in agents/, so the .env sits one level up.
 ROOT = Path(__file__).resolve().parent.parent
@@ -159,33 +161,78 @@ def reasoning_llm(
 
 
 # ---------------------------------------------------------------------------
-# Azure OpenAI — intake tier (gpt-chat-latest)
+# Azure OpenAI — conversation tier (gpt-5.2-chat)
 # ---------------------------------------------------------------------------
 
-INTAKE_ENDPOINT = optional(
-    "AZURE_OPENAI_INTAKE_ENDPOINT", default="https://lifestyleenhanced.openai.azure.com/"
+# Reached through the Azure AI Services v1 API rather than the classic Azure OpenAI one,
+# so it carries a base URL and a model name instead of an endpoint, a deployment and an
+# API version. That is how this deployment is published; it is not a style preference.
+CONVERSATION_BASE_URL = optional(
+    "AZURE_OPENAI_CONVERSATION_BASE_URL",
+    "D2C_CONVERSATION_BASE_URL",
+    default="https://mwaheed-v01-resource.services.ai.azure.com/openai/v1/",
 )
-INTAKE_DEPLOYMENT = optional("AZURE_OPENAI_INTAKE_DEPLOYMENT", default="gpt-chat-latest")
-# Its own version for the same reason the reasoning tier has one: this deployment is a
-# newer model than gpt-4o-mini and does not run on the chat tier's API version.
-INTAKE_API_VERSION = optional(
-    "AZURE_OPENAI_INTAKE_API_VERSION", default="2024-12-01-preview"
+CONVERSATION_MODEL = optional(
+    "AZURE_OPENAI_CONVERSATION_MODEL", "D2C_CONVERSATION_MODEL", default="gpt-5.2-chat"
 )
 
 
-def intake_llm(**kwargs) -> AzureChatOpenAI:
-    """Client for the activity-intake conversation.
+def conversation_llm(**kwargs) -> ChatOpenAI:
+    """Client for every turn of the activity-intake interview.
 
-    Deliberately passes no ``temperature`` or token cap. This deployment sits between an
-    analyst pressing send and the next question appearing, and it is the only model in the
-    system talking to a person rather than to another prompt — its own defaults are what
-    the interview was written and tuned against.
+    Deliberately passes no ``temperature`` or token cap. This is the only model in the
+    system with a person waiting on the other end of the call, and its own defaults are
+    what the interview was written and tuned against. (The gpt-5 family also rejects any
+    temperature but the default, and determinism here would be a mirage regardless — the
+    interview branches on judgement, not on sampling.)
+    """
+    return ChatOpenAI(
+        model=CONVERSATION_MODEL,
+        base_url=CONVERSATION_BASE_URL,
+        api_key=require("AZURE_OPENAI_CONVERSATION_API_KEY", "D2C_CONVERSATION_API_KEY"),
+        **kwargs,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Azure OpenAI — writer tier (gpt-5)
+# ---------------------------------------------------------------------------
+
+# Its own tier rather than a second caller of the reasoning one, although it defaults to
+# the same deployment: the description is written once, at the end of an interview an
+# analyst is still sitting in, and the estimation steps are a long batch nobody watches.
+# Separating them means the intake can be moved to a faster or stronger model without
+# re-pricing every cost-parameter call, and vice versa.
+WRITER_ENDPOINT = optional(
+    "AZURE_OPENAI_WRITER_ENDPOINT", "D2C_WRITER_ENDPOINT", default=REASONING_ENDPOINT
+)
+WRITER_DEPLOYMENT = optional(
+    "AZURE_OPENAI_WRITER_DEPLOYMENT", "D2C_WRITER_DEPLOYMENT", default=REASONING_DEPLOYMENT
+)
+WRITER_API_VERSION = optional(
+    "AZURE_OPENAI_WRITER_API_VERSION", "D2C_WRITER_API_VERSION", default=REASONING_API_VERSION
+)
+
+
+def writer_llm(
+    *, reasoning_effort: str = "low", max_completion_tokens: int = 8000, **kwargs
+) -> AzureChatOpenAI:
+    """Client for the activity description and its rewrites.
+
+    The key falls back to the reasoning tier's, because by default this *is* the reasoning
+    tier's deployment and demanding the same secret under a second name to start the app
+    would be theatre. Point ``AZURE_OPENAI_WRITER_*`` elsewhere and supply its own key.
+
+    ``max_completion_tokens`` rather than ``max_tokens``: reasoning tokens come out of the
+    same budget on this deployment.
     """
     return AzureChatOpenAI(
-        deployment_name=INTAKE_DEPLOYMENT,
-        openai_api_version=INTAKE_API_VERSION,
-        azure_endpoint=INTAKE_ENDPOINT,
-        api_key=require("AZURE_OPENAI_INTAKE_API_KEY"),
+        deployment_name=WRITER_DEPLOYMENT,
+        openai_api_version=WRITER_API_VERSION,
+        azure_endpoint=WRITER_ENDPOINT,
+        api_key=optional("AZURE_OPENAI_WRITER_API_KEY", "D2C_WRITER_API_KEY") or reasoning_key(),
+        reasoning_effort=reasoning_effort,
+        max_completion_tokens=max_completion_tokens,
         **kwargs,
     )
 

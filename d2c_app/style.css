@@ -1145,9 +1145,82 @@ a:hover { color: var(--brand-strong); }
 .facts-table tr.facts-row-new td { animation: factIn 1.6s ease-out; }
 @keyframes factIn { from { background: var(--brand-soft); } to { background: transparent; } }
 
-.facts-pending { margin-top: 0.9rem; padding-top: 0.7rem; border-top: 1px solid var(--border); }
-.facts-pending-title { font-size: 0.68rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
-.facts-pending ul { margin: 0.4rem 0 0; padding-left: 1rem; font-size: 0.76rem; line-height: 1.5; color: var(--text-muted); }
+/* Facts are grouped under the stage that captured them, so the panel doubles as the
+   progress indicator: watching "Scope and geography" fill up is how the analyst knows
+   where they are, now that there is no fixed step number to show them. */
+.facts-group + .facts-group { margin-top: 0.95rem; }
+.facts-group-title {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding-bottom: 0.2rem;
+}
+
+/* A value the analyst never stated. The interview is allowed to default one rather than
+   stall on it, but they are accepting every one of these when they submit, so the panel
+   has to say which figures are theirs. */
+.fact-badge {
+  display: inline-block;
+  margin-left: 0.35rem;
+  padding: 0.02rem 0.35rem;
+  border-radius: var(--r-sm);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+.fact-badge-default { background: var(--warn-soft); color: var(--warn); }
+.fact-badge-inferred { background: var(--info-soft); color: var(--info); }
+
+/* The category, family and spine, at the top of the panel. The spine decides which
+   questions the rest of the interview asks, so it sits where it can be corrected early —
+   correcting it late means starting the interview over. */
+.facts-classification {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-bottom: 0.9rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+.facts-chip {
+  padding: 0.14rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  font-size: 0.68rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+  background: var(--surface-2);
+}
+.facts-chip-spine { border-color: var(--brand); color: var(--brand); background: var(--brand-soft); font-weight: 600; }
+
+/* Suggested answers to the question just asked, above the composer. Concrete values, not
+   a menu: the interview always accepts free text, and these only save typing. */
+.chat-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+.chat-suggestions[hidden] { display: none; }
+.chat-suggestion {
+  padding: 0.3rem 0.65rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.chat-suggestion:hover { background: var(--brand-soft); border-color: var(--brand); color: var(--brand); }
+.chat-suggestion:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 
 /* ============================================================
    Floating AI Assistant window

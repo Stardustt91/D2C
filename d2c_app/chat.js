@@ -4,9 +4,11 @@
 // it falls back to redirecting to "/".
 //
 // The conversation is plain free text — the assistant asks one question at a time and
-// the analyst answers however they like. What it has understood shows up in the facts
-// drawer on the left, redrawn from every response, so the panel needs no state of its
-// own and can never drift from the server's.
+// the analyst answers however they like, or clicks one of the suggested answers. What it
+// has understood shows up in the facts drawer on the left, grouped by the stage that
+// captured it and badged where the value is a default rather than something the analyst
+// said. Everything on screen is redrawn from each response, so the page holds no intake
+// state of its own and can never drift from the server's.
 
 let sessionId = null;
 let isWaitingForResponse = false;
@@ -14,12 +16,12 @@ let chatReady = false;
 // The drawer opens itself once, the first time a fact lands in it. A panel nobody has
 // been shown is a panel nobody knows to open; after that, it is the analyst's to control.
 let factsRevealed = false;
-let lastFactKeys = [];
 
 const chatMessages = document.getElementById('chat-messages');
 const userInput = document.getElementById('user-input');
 const sendBtn = document.getElementById('send-btn');
 const statusMessage = document.getElementById('status-message');
+const suggestionsBox = document.getElementById('chat-suggestions');
 
 const factsRail = document.getElementById('facts-rail');
 const factsHandle = document.getElementById('facts-handle');
@@ -29,6 +31,12 @@ const factsCount = document.getElementById('facts-count');
 const assistantWindow = document.getElementById('assistant-window');
 
 const BOT_AVATAR_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9L12 3Z"/></svg>';
+
+// The assistant is told not to offer a "not sure" option of its own, because every
+// question then carries one and the chips stop being answers. It is added here instead,
+// where it means one specific thing: close whatever is still open in this stage with a
+// sensible default, which is exactly what the interview does with that phrasing.
+const NOT_SURE = 'Not sure — use a sensible default';
 
 // Initialize chat session (idempotent — safe to call when the window opens)
 async function initChat() {
@@ -46,7 +54,7 @@ async function initChat() {
 
     chatMessages.innerHTML = '';
     addBotMessage(data.bot_message);
-    renderFacts(data);
+    renderTurn(data);
 
     userInput.disabled = false;
     sendBtn.disabled = false;
@@ -71,87 +79,100 @@ function setFactsOpen(open) {
   if (assistantWindow) assistantWindow.classList.toggle('facts-open', open);
 }
 
-function prettifyKey(key) {
-  const words = String(key).replace(/[_-]+/g, ' ').trim();
-  return words.charAt(0).toUpperCase() + words.slice(1);
+// Everything the page shows for one turn: the panel, the progress line and the chips.
+function renderTurn(data) {
+  renderFacts(data);
+  renderSuggestions(data.suggestions, data.phase);
 }
 
-// Redraw the panel from a /chat response. Facts, the step line and the count all come
-// from the same payload, so nothing here can disagree with the server.
+// Redraw the panel from a /chat response. The facts arrive grouped by the stage that
+// captured them, the progress line by the stages THIS interview will actually run — a
+// rights deal runs five where a labour service runs six — and both come from the same
+// payload, so nothing here can disagree with the server.
 function renderFacts(data) {
   if (!factsBody) return;
 
-  const facts = data.facts || {};
-  const keys = Object.keys(facts);
-  const pending = data.pending || [];
+  const groups = data.facts || [];
+  const fresh = new Set(data.new_fact_keys || []);
+  const count = groups.reduce((total, group) => total + (group.facts || []).length, 0);
+  const progress = data.progress || {};
 
   if (factsStep) {
-    const total = data.total_steps || 8;
-    const step = data.current_step || 1;
-    const name = data.step_name || '';
-    factsStep.textContent = 'Step ' + step + ' of ' + total + (name ? ' · ' + name : '');
+    const position = progress.position;
+    const total = progress.total;
+    const label = progress.stage_label || '';
+    const step = position && total ? 'Stage ' + position + ' of ' + total : '';
+    factsStep.textContent = [step, label].filter(Boolean).join(' · ');
   }
 
   if (factsCount) {
-    factsCount.textContent = String(keys.length);
-    factsCount.hidden = keys.length === 0;
+    factsCount.textContent = String(count);
+    factsCount.hidden = count === 0;
   }
 
   factsBody.innerHTML = '';
 
-  if (!keys.length) {
+  const classification = renderClassification(data.classification);
+  if (classification) factsBody.appendChild(classification);
+
+  if (!count) {
     const empty = document.createElement('p');
     empty.className = 'facts-empty';
-    empty.textContent = 'Nothing captured yet. Everything you confirm appears here.';
+    empty.textContent = 'Nothing captured yet. Everything you tell me appears here.';
     factsBody.appendChild(empty);
-    lastFactKeys = [];
     return;
   }
 
-  const table = document.createElement('table');
-  table.className = 'facts-table';
-  const tbody = document.createElement('tbody');
+  groups.forEach((group) => {
+    const facts = group.facts || [];
+    if (!facts.length) return;
 
-  keys.forEach((key) => {
-    const row = document.createElement('tr');
-    if (!lastFactKeys.includes(key)) row.className = 'facts-row-new';
-
-    const label = document.createElement('th');
-    label.textContent = prettifyKey(key);
-
-    const value = document.createElement('td');
-    // textContent, not innerHTML: these strings are model output routed straight back
-    // into the page.
-    value.textContent = facts[key];
-
-    row.appendChild(label);
-    row.appendChild(value);
-    tbody.appendChild(row);
-  });
-
-  table.appendChild(tbody);
-  factsBody.appendChild(table);
-
-  if (pending.length) {
     const block = document.createElement('div');
-    block.className = 'facts-pending';
+    block.className = 'facts-group';
 
     const title = document.createElement('div');
-    title.className = 'facts-pending-title';
-    title.textContent = 'To be derived';
+    title.className = 'facts-group-title';
+    title.textContent = group.label || '';
     block.appendChild(title);
 
-    const list = document.createElement('ul');
-    pending.forEach((item) => {
-      const li = document.createElement('li');
-      li.textContent = prettifyKey(item);
-      list.appendChild(li);
-    });
-    block.appendChild(list);
-    factsBody.appendChild(block);
-  }
+    const table = document.createElement('table');
+    table.className = 'facts-table';
+    const tbody = document.createElement('tbody');
 
-  lastFactKeys = keys;
+    facts.forEach((fact) => {
+      const row = document.createElement('tr');
+      if (fresh.has(fact.key)) row.className = 'facts-row-new';
+
+      const label = document.createElement('th');
+      label.textContent = fact.label || fact.key || '';
+
+      const value = document.createElement('td');
+      // textContent, not innerHTML: these strings are model output routed straight back
+      // into the page.
+      value.textContent = [fact.value, fact.unit].filter(Boolean).join(' ');
+
+      // A default is a number nobody agreed to yet. Badging it is what lets an analyst
+      // scanning the panel see at a glance which of these figures are theirs.
+      const source = fact.source || 'user';
+      if (source !== 'user') {
+        const badge = document.createElement('span');
+        badge.className = 'fact-badge fact-badge-' + source;
+        badge.textContent = source;
+        badge.title = source === 'default'
+          ? 'Applied as a default — it will be listed as an assumption'
+          : 'Inferred from what you said rather than stated';
+        value.appendChild(badge);
+      }
+
+      row.appendChild(label);
+      row.appendChild(value);
+      tbody.appendChild(row);
+    });
+
+    table.appendChild(tbody);
+    block.appendChild(table);
+    factsBody.appendChild(block);
+  });
 
   if (!factsRevealed) {
     factsRevealed = true;
@@ -159,11 +180,69 @@ function renderFacts(data) {
   }
 }
 
+// The classification decides which questions the rest of the interview asks, so it is put
+// at the top of the panel where it can be corrected early — correcting it late means
+// starting over.
+function renderClassification(classification) {
+  const info = classification || {};
+  if (!info.spine_name && !info.category_name) return null;
+
+  const block = document.createElement('div');
+  block.className = 'facts-classification';
+
+  const chips = [
+    [info.category_code, info.category_name].filter(Boolean).join(' '),
+    [info.family_code, info.family_name].filter(Boolean).join(' '),
+  ];
+  chips.filter(Boolean).forEach((text) => {
+    const chip = document.createElement('span');
+    chip.className = 'facts-chip';
+    chip.textContent = text;
+    block.appendChild(chip);
+  });
+
+  if (info.spine_name) {
+    const chip = document.createElement('span');
+    chip.className = 'facts-chip facts-chip-spine';
+    chip.textContent = info.spine_name;
+    chip.title = 'How this service is costed — it decides which questions you are asked';
+    block.appendChild(chip);
+  }
+
+  return block;
+}
+
 if (factsHandle) {
   factsHandle.addEventListener('click', () => {
     setFactsOpen(!factsRail.classList.contains('open'));
     // A manual click settles it either way: no auto-open should override the analyst.
     factsRevealed = true;
+  });
+}
+
+/* ------------------------------ Suggestions ------------------------------ */
+
+// Quick replies for the question just asked, or — once there is a draft — the four things
+// that can be done with it. A shortcut, never the only way in: free text always works.
+function renderSuggestions(suggestions, phase) {
+  if (!suggestionsBox) return;
+
+  suggestionsBox.innerHTML = '';
+  const options = (suggestions || []).filter(Boolean);
+  if (options.length && phase !== 'review') options.push(NOT_SURE);
+
+  suggestionsBox.hidden = !options.length;
+  options.forEach((text) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'chat-suggestion';
+    chip.textContent = text;
+    chip.addEventListener('click', () => {
+      if (isWaitingForResponse) return;
+      renderSuggestions([]);
+      submitAnswer(text);
+    });
+    suggestionsBox.appendChild(chip);
   });
 }
 
@@ -286,6 +365,7 @@ async function submitAnswer(message) {
   if (!message || isWaitingForResponse) return;
 
   addUserMessage(message);
+  renderSuggestions([]);
 
   isWaitingForResponse = true;
   userInput.disabled = true;
@@ -301,7 +381,7 @@ async function submitAnswer(message) {
 
     const data = await response.json();
     addBotMessage(data.bot_message, true);
-    renderFacts(data);
+    renderTurn(data);
 
     if (data.done && data.activity_description) {
       const facts = data.activity_facts || null;

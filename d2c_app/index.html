@@ -208,10 +208,10 @@
           <div class="facts-panel" id="facts-panel">
             <div class="facts-panel-head">
               <strong>Captured facts</strong>
-              <small id="facts-step">Step 1 of 8 · General Service Definition</small>
+              <small id="facts-step">Stage 1 of 4 · Framing</small>
             </div>
             <div class="facts-panel-body" id="facts-body">
-              <p class="facts-empty">Nothing captured yet. Everything you confirm appears here.</p>
+              <p class="facts-empty">Nothing captured yet. Everything you tell me appears here.</p>
             </div>
           </div>
         </aside>
@@ -228,6 +228,9 @@
             </div>
           </div>
           <div id="chat-input-area" class="chat-input-area">
+            <!-- Quick replies for the question just asked, or the four things that can be
+                 done with a finished draft. Always a shortcut — free text still works. -->
+            <div id="chat-suggestions" class="chat-suggestions" hidden></div>
             <div class="chat-input-row">
               <textarea id="user-input" class="chat-input" placeholder="Type your message…" rows="1" disabled></textarea>
               <button id="send-btn" class="chat-send-btn" type="button" disabled aria-label="Send message">

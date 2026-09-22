@@ -35,10 +35,10 @@
             <div class="facts-panel" id="facts-panel">
               <div class="facts-panel-head">
                 <strong>Captured facts</strong>
-                <small id="facts-step">Step 1 of 8 · General Service Definition</small>
+                <small id="facts-step">Stage 1 of 4 · Framing</small>
               </div>
               <div class="facts-panel-body" id="facts-body">
-                <p class="facts-empty">Nothing captured yet. Everything you confirm appears here.</p>
+                <p class="facts-empty">Nothing captured yet. Everything you tell me appears here.</p>
               </div>
             </div>
           </aside>
@@ -62,6 +62,9 @@
 
             <!-- Input Area -->
             <div id="chat-input-area" class="chat-input-area">
+              <!-- Quick replies for the question just asked, or the four things that can
+                   be done with a finished draft. Always a shortcut — free text works. -->
+              <div id="chat-suggestions" class="chat-suggestions" hidden></div>
               <div class="input-group">
                 <textarea
                   id="user-input"

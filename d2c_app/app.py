@@ -61,7 +61,8 @@ Hierarchy: Activity → Cost Drivers → Cost Components → Cost Inputs → Cos
 Endpoints:
   - POST /run          – Run one workflow step (SSE): drivers | components | inputs | parameters | costs.
   - POST /entity/operation – CRUD on structure (add/edit/delete at any level); no agent re-runs on add.
-  - /chat/*            – Activity description (init, message).
+  - /chat/*            – The activity-intake interview (init, message). One turn per POST;
+                         see agents/activity_intake/README.md for what a turn carries.
 """
 
 import re
@@ -107,12 +108,11 @@ from agents.deduplication import (
     deduplicate_parameters,
 )
 from agents.cost_parameter import validate_formula_units
-from agents.activity_intake_chat import (
-    OPENING_MESSAGE,
-    TOTAL_STEPS as CHAT_TOTAL_STEPS,
+from agents.activity_intake import (
     activity_facts as chat_activity_facts,
     new_session as new_chat_session,
     run_turn as run_chat_turn,
+    turn_view as chat_turn_view,
 )
 from agents.session_title import generate_title
 
@@ -321,22 +321,39 @@ class ChatMessage(BaseModel):
 
 
 class ChatResponse(BaseModel):
+    """One turn of the intake interview, as the browser receives it.
+
+    Everything but the last two fields is ``turn_view()`` verbatim — the panel, the chips
+    and the progress line are all redrawn wholesale from each response, so the front end
+    holds no intake state of its own and cannot drift from the server's.
+    """
+
     bot_message: str
     done: bool = False
+
+    #: Quick replies for the question just asked, concrete and specific to this service;
+    #: during review, the four things that can be done with the draft.
+    suggestions: List[str] = []
+    #: Everything captured so far, grouped by the stage that captured it. Each fact carries
+    #: key, label, value, unit, stage and source (user | default | inferred).
+    facts: List[dict] = []
+    #: The keys that moved this turn, so the panel can highlight the analyst's last
+    #: sentence landing rather than making them re-read twenty rows.
+    new_fact_keys: List[str] = []
+    #: Category, cost driver family and model spine — the routing decision the shape of the
+    #: rest of the interview hangs on, and the one worth correcting early.
+    classification: dict = {}
+    #: The stages THIS conversation will run, given that spine, and where it has reached.
+    progress: dict = {}
+    #: interview | review | done
+    phase: str = "interview"
+    #: The draft, from the review phase onward. Shown in the conversation so the analyst can
+    #: edit, rewrite or question it before accepting.
+    description: str = ""
+
+    #: Set only on the turn the analyst accepts the draft; what the estimator is handed.
     activity_description: Optional[str] = None
     activity_facts: Optional[dict] = None
-    #: Everything the intake has captured so far, mirrored into the facts panel beside the
-    #: conversation. Sent on every turn, so the panel needs no state of its own.
-    facts: Dict[str, str] = {}
-    #: Fact keys the assistant deliberately left for the resource planner to derive.
-    pending: List[str] = []
-    #: Where the interview has reached, for the panel's progress line.
-    current_step: int = 1
-    step_name: str = ""
-    step_status: str = "in_progress"
-    total_steps: int = CHAT_TOTAL_STEPS
-    #: True once the assistant has finished step 8 and is waiting for "submit".
-    waiting_for_confirmation: bool = False
 
 
 class SessionCreate(BaseModel):
@@ -1439,28 +1456,39 @@ async def chat_page():
     return (STATIC_DIR / "chat.html").read_text(encoding="utf-8")
 
 
+def _chat_response(state, **overrides) -> ChatResponse:
+    """One turn of the interview as the browser receives it.
+
+    ``turn_view`` is the whole interface between the intake graph and this app; everything
+    here beyond renaming ``reply`` is the two fields the estimator needs on the final turn.
+    """
+    view = chat_turn_view(state)
+    payload = {
+        "bot_message": view["reply"],
+        "done": view["done"],
+        "suggestions": view["suggestions"],
+        "facts": view["facts"],
+        "new_fact_keys": view["new_fact_keys"],
+        "classification": view["classification"],
+        "progress": view["progress"],
+        "phase": view["phase"],
+        "description": view["description"],
+    }
+    return ChatResponse(**{**payload, **overrides})
+
+
 @app.post("/chat/init")
 async def chat_init():
     import uuid
     session_id = str(uuid.uuid4())
     state = new_chat_session()
     chat_sessions[session_id] = state
-    return {
-        "session_id": session_id,
-        "bot_message": OPENING_MESSAGE,
-        "done": False,
-        "facts": {},
-        "pending": [],
-        "current_step": state.get("current_step", 1),
-        "step_name": state.get("step_name", ""),
-        "step_status": state.get("step_status", "in_progress"),
-        "total_steps": CHAT_TOTAL_STEPS,
-    }
+    return {"session_id": session_id, **_chat_response(state).model_dump()}
 
 
-# Deliberately `def`, not `async def`: the intake model's calls are blocking, and the
-# submit turn additionally writes the description on the reasoning tier. Left on the event
-# loop a single slow turn would stall every other request in the process; FastAPI runs sync
+# Deliberately `def`, not `async def`: the conversation model's calls are blocking, and the
+# turn that writes the description additionally runs the writer tier. Left on the event loop
+# a single slow turn would stall every other request in the process; FastAPI runs sync
 # routes in a threadpool.
 @app.post("/chat/message")
 def chat_message(body: ChatMessage):
@@ -1468,38 +1496,30 @@ def chat_message(body: ChatMessage):
         raise HTTPException(status_code=404, detail="Session not found")
 
     user_message = body.message.strip()
+    # Still the full view, not a bare sentence: the panel is redrawn from whatever comes
+    # back, so a short payload here would empty it. Nothing moved, so nothing highlights.
     if not user_message:
-        return ChatResponse(bot_message="Could you tell me a bit more?", done=False)
+        return _chat_response(
+            chat_sessions[body.session_id],
+            bot_message="Could you tell me a bit more?",
+            new_fact_keys=[],
+        )
 
     state = run_chat_turn(chat_sessions[body.session_id], user_message)
     chat_sessions[body.session_id] = state
 
-    facts = chat_activity_facts(state)
-    # The panel is redrawn wholesale from every response, including the last one, so a
-    # session that ends still shows what it ended with.
-    panel = {
-        "facts": facts,
-        "pending": list(state.get("pending") or []),
-        "current_step": int(state.get("current_step") or 1),
-        "step_name": state.get("step_name") or "",
-        "step_status": state.get("step_status") or "in_progress",
-        "waiting_for_confirmation": state.get("phase") == "review",
-    }
-
+    # The interview ends silently — the analyst has already read the description and
+    # accepted it, so the graph has nothing left to say. This app's own words go here
+    # rather than in the graph, which does not know what happens to the text next.
     if state.get("done"):
-        return ChatResponse(
+        return _chat_response(
+            state,
             bot_message="Description ready — adding it to the estimator.",
-            done=True,
             activity_description=state.get("description") or "",
-            activity_facts=facts,
-            **panel,
+            activity_facts=chat_activity_facts(state),
         )
 
-    return ChatResponse(
-        bot_message=state.get("bot_message") or "Could you tell me a bit more?",
-        done=False,
-        **panel,
-    )
+    return _chat_response(state)
 
 
 if __name__ == "__main__":

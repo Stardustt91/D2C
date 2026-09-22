@@ -23,9 +23,16 @@ python agents/workflow_test.py
 # Individual agent modules are also directly runnable:
 python agents/cost_driver.py
 python agents/cost_component.py
+
+# The activity-intake interview, in a terminal, printing what the UI would render:
+python agents/activity_intake/cli.py
+
+# Its 38 checks. No model calls, no credentials needed, free to run:
+python agents/activity_intake/selftest.py
 ```
 
-There are no automated test suites, no `requirements.txt`, and no linting configuration. Dependencies (FastAPI, langchain, azure-openai, faiss, etc.) must be installed manually.
+Apart from `agents/activity_intake/selftest.py` there are no automated test suites, and
+there is no `requirements.txt` and no linting configuration. Dependencies (FastAPI, langchain, azure-openai, faiss, etc.) must be installed manually.
 
 ## Architecture
 
@@ -86,7 +93,7 @@ note under the grand total, and exported in the `cost_status` column. Set
 | `d2c_app/sessions_db.py` | SQLite store for estimation sessions (schema + CRUD helpers) |
 | `d2c_app/sessions.js` | Sidebar session list, rename/delete, and the debounced autosave |
 | `agents/session_title.py` | LLM agent: activity description → short session title |
-| `d2c_app/chat.html` + `chat.js` | Conversational assistant for building activity descriptions, plus the facts drawer |
+| `d2c_app/chat.html` + `chat.js` | Conversational assistant for building activity descriptions: the facts drawer, the suggestion chips and the progress line |
 | `d2c_app/export.js` | Excel (2 sheets: "Cost Estimation" + "Resources"), PowerPoint and database export |
 | `agents/env_config.py` | Loads `.env`; the only place credentials/endpoints enter the process. Builds all LLM + embeddings clients |
 | `agents/resource_planner.py` | LLM agent: activity → resourcing & scaling plan (quantities, scaling classes, critic pass) |
@@ -97,7 +104,8 @@ note under the grand total, and exported in the `cost_status` column. Set
 | `agents/cost_inputs.py` | LLM agent: component → cost inputs |
 | `agents/cost_parameter.py` | LLM agent: input → cost parameters + formulas |
 | `agents/cost_estimation.py` | LLM agent: parameters → final EGP cost with sources |
-| `agents/activity_intake_chat.py` | The AI Assistant: 8-step intake interview → facts → activity description |
+| `agents/activity_intake/` | The AI Assistant: LangGraph intake interview → facts → activity description. Has its own `README.md` |
+| `agents/build_intake_knowledge.py` | Offline script: regenerates `activity_intake/knowledge.py` from the category tree and the Cost Driver Library |
 | `agents/description_extraction.py` | Superseded questionnaire flow; kept only for its CLI |
 | `agents/structure_formatter.py` | Unified display formatter for any stage of the hierarchy |
 | `agents/workflow_test.py` | CLI end-to-end test script |
@@ -115,61 +123,84 @@ note under the grand total, and exported in the `cost_status` column. Set
 - `PATCH /api/sessions/{id}` — Rename, or save progress. Only the fields sent are written
 - `DELETE /api/sessions/{id}` — Delete a session
 - `GET /chat` — Chat UI
-- `POST /chat/init` — Initialize chat session
-- `POST /chat/message` — Handle chat turn
+- `POST /chat/init` — Start an intake session; returns `session_id` plus the opening turn
+- `POST /chat/message` — One interview turn: reply, suggestion chips, facts grouped by stage, classification, progress, and the description once it exists
 
 ### The AI Assistant (activity intake)
 
-`agents/activity_intake_chat.py` runs an eight-step cost-modelling interview — service
-definition, roles & staffing, working days, supervision, employment costs, operational
-requirements, overheads & profit, finalisation. The workflow *is* the system prompt
-(`WORKFLOW_PROMPT`), so the model holds the whole conversation itself: one question at a
-time, free text only, no option chips.
+`agents/activity_intake/` is a LangGraph state machine, with its own `README.md` covering it
+in full. It replaced `activity_intake_chat.py`, which handed the model a fixed eight-step
+cost-modelling workflow as its system prompt and walked every analyst through all eight
+steps whatever they were buying — asked to cost a celebrity endorsement, it would work out
+how many FTE the campaign needed.
 
-**Nothing is appended to that prompt, and nothing should be.** It is byte-identical to the
-workflow document; everything the app needs on top of it is carried by the output schema's
-field descriptions and by code (`OPENING_MESSAGE`, `REVIEW_HINT` and `_is_submit` are the
-app's own words and logic, and never enter the model's context — history starts empty). The
-only thing the model is told beyond the workflow is today's date, and that goes in as its
-own system message ahead of it (`_today_message`, computed per call so a long-running server
-doesn't go stale) — without it, asked in Step 1 for a start date, it answers "next month"
-with a date a year out. This
-is a rule with a scar behind it: a block instructing the model to record only what the user
-had explicitly stated, read next to the workflow's "Ask where the service(s) will be
-delivered (country and region or city)", made it ask an analyst who had said "Cairo" which
-country Cairo is in. House rules get read in the context of the workflow's own wording, and
-what they do there is hard to predict. Test any prompt change against a real conversation.
+**The shape of the interview is a routing decision, taken once.** `classify` places the
+service in the Vodafone Egypt category tree, which gives it a Cost Driver Library family and
+a **model spine**; the spine decides which one of five middle stages runs:
 
-It runs on its own Azure deployment — the **intake tier**, `gpt-chat-latest` — because it is
-the only model in the system with a person waiting in real time on the other end.
+```
+START ─→ classify ─→ scope ─┬─→ labour ───────┐
+                            ├─→ deliverable ──┤
+                            ├─→ transaction ──┼─→ commercials ─→ write ─→ END
+                            ├─→ rights ───────┤
+                            └─→ passthrough ──┘
 
-Every turn returns a `ChatbotTurn`: the reply, where in the eight steps it is, and the
-complete accumulated `facts` as `canonical_key -> value`. Facts are **merged, never
-replaced** (`_merge_facts`) — the schema asks for the full set each turn, but a turn that
-returns only what changed must not erase steps 1–7. Merging alone leaves a wart: the model
-renames its own keys (`service` for what it earlier called `service_description`) and both
-survive, showing one fact twice. A held key the turn did not return, whose value duplicates
-one it did, is treated as that rename and dropped — but only for values of at least
-`_ALIAS_MIN_LENGTH` characters, because "No" answers half the workflow's questions and
-collapsing on it would destroy real facts. They are mirrored live into the **facts
-drawer**, a rail on the left of the assistant window that opens into a read-only table; the
-panel is redrawn wholesale from every response, so it holds no state and cannot drift from
-the server's.
+(resume) ─→ review ─→ revise | write | END
+```
 
-The analyst ends the intake by typing **submit** (accepted at any point once facts exist —
-eight steps is a long interview and there has to be a way out). Once the model reports the
-last step finished, `REVIEW_HINT` is appended to its reply by the app to say so. Bare
-confirmations like "yes" or "confirmed" count as submit *only* after step 8 is declared complete,
-because the workflow requires explicit confirmation whenever it applies a default and a
-mid-flow "confirmed" would otherwise end the interview. On submit the facts — and only the
-facts — go to the **reasoning tier** (`generate_activity_description`), which rewrites them
-as the activity description; it runs once, off the critical path, and its output is the sole
-input to the estimation pipeline. The facts dict also flows on as `activity_facts` to the
-resource planner.
+A rights deal is never asked how many FTE it needs; a labour service is never asked about
+territory or exclusivity. Stages also finish early on sufficiency — a brief that already
+fixes scale, period and geography passes through `scope` without a question. In practice
+that is **three to six exchanges**, against eight mandatory steps before.
 
-Two files the prompt names as preferred sources, `Working Days.xlsx` and
-`National Statistics.xlsx`, are not in the repo; the model falls back to its own defaults for
-those and must have them confirmed by the analyst.
+The reference data (`knowledge.py`: 88 subcategories, 32 cost-driver families) is generated
+code rather than a vector index, because the interview needs exactly one family out of
+thirty-four, chosen deterministically from a classification the model already committed to.
+Regenerate it with `python agents/build_intake_knowledge.py` after either source document is
+revised, then run `python agents/activity_intake/selftest.py` — 38 checks, no model calls,
+which is what catches a dangling family reference or a lost spine tag.
+
+**Two model tiers, split on who is waiting.** Every turn runs on the **conversation tier**
+(`gpt-5.2-chat`) — the only model in the system with a person waiting in real time. The
+description, and any full rewrite of it, runs on the **writer tier** (`gpt-5`), once, off the
+critical path. A targeted *edit* sits on the conversation tier deliberately: it is a local
+change to text that already exists, and the reasoning tier took ~25s to make it while the
+analyst watched a spinner. Both clients are built on first use, not at import, so `selftest`
+runs on a machine with no `.env`.
+
+`turn_view(state)` is the whole interface to the UI, and `/chat/message` returns it verbatim
+plus the two fields the estimator needs. It carries the reply, the **suggestion chips**, the
+**facts** grouped by capturing stage, `new_fact_keys` for the highlight, the
+**classification**, and a `progress.plan` that is the interview *this* conversation will
+actually get — so the indicator says "3 of 5" honestly rather than "step 2 of 8" when six of
+the eight will never run.
+
+Every fact carries `source`: `user`, `default` or `inferred`. The last two are **badged** in
+the facts drawer, because the analyst accepts every default by submitting the description
+and a default nobody was shown is one nobody agreed to. The same defaults are carried into
+the description's assumption register by `_carry_defaults`, which matches on vocabulary
+rather than labels so a rephrasing is not listed twice. Facts are **merged, never replaced**,
+with a rename-collapse guarded by a minimum value length — "No" answers half the questions
+in this interview and collapsing on it would destroy real facts.
+
+The assistant never asks what something costs. Working that out is the purpose of the system
+this feeds, and an analyst who already knew would not be here — it asks about structure and
+quantity only. The suggestion chips deliberately carry no "not sure" option from the model;
+`chat.js` appends one, because a "not sure" on every question stops the chips being answers.
+
+**The description is reviewed inside the conversation.** Once written, four things can
+happen to it — **submit**, **edit** ("make it 18 stores" — targeted, and it updates the facts
+panel too), **rewrite** ("too long, start again") and **discuss** ("why 4.9 FTE per guard
+post?", answered without touching the text). Free text is classified into one of the four,
+so the chips are a shortcut rather than the only way in. On submit, `state["description"]` is
+the sole input to the estimation pipeline and `activity_facts(state)` flows on as
+`activity_facts` to the resource planner.
+
+The model writes the narrative and the assumptions; the modelling basis — spine, unit of
+measure, the build rule the estimator applies, the benchmark bands it validates against — is
+composed in code from the classification, because those are facts about the method that are
+already correct in `knowledge.py`, and a model asked to restate them will eventually restate
+one of them wrongly.
 
 ### Sessions
 
@@ -253,13 +284,20 @@ All credentials come from the environment via `agents/env_config.py`, which load
 `.env` (python-dotenv) when first imported — so every entry point picks it up: `uvicorn`,
 `workflow_test.py`, or running an agent module directly. Copy `.env.example` to `.env` to set up.
 
-Keys are required and fail loudly at import (`MissingCredential`, naming the variable) rather than
+Keys are required and fail loudly (`MissingCredential`, naming the variable) rather than
 surfacing as a 401 mid-workflow. Endpoints, deployment names and API versions are optional and
-default to the values the code previously hardcoded. Four non-interchangeable Azure deployments:
-`chat` (gpt-4o-mini, structure steps), `reasoning` (gpt-5, planner/parameters/estimation/pricing/
-description write-up), `intake` (gpt-chat-latest, the AI Assistant interview), and `embeddings`
-(text-embedding-3-large, the FAISS retrievers). Each has its own API version — gpt-5 and
-gpt-chat-latest need newer ones than gpt-4o-mini, so they are deliberately not shared.
+default to the values the code previously hardcoded. Five non-interchangeable Azure deployments:
+`chat` (gpt-4o-mini, structure steps), `reasoning` (gpt-5, planner/parameters/estimation/
+pricing), `conversation` (gpt-5.2-chat, every turn of the AI Assistant interview), `writer`
+(gpt-5, the activity description it ends on), and `embeddings` (text-embedding-3-large, the
+FAISS retrievers). Each has its own API version — gpt-5 and gpt-5.2-chat need newer ones than
+gpt-4o-mini, so they are deliberately not shared.
+
+`conversation` is reached through the Azure AI Services v1 API, so it takes a base URL and a
+model name rather than an endpoint, a deployment and an API version. `writer` defaults every
+variable, key included, to the `reasoning` tier's — by default it *is* that deployment, and
+it exists as its own tier so the intake can be moved without re-pricing every cost-parameter
+call.
 
 ## Documentation Files
 
